@@ -9,8 +9,7 @@ final class StatusBarController: NSObject {
     private let popover = NSPopover()
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private var statusHostingView: NSHostingView<MenuBarStatusView>?
-    private var snapshotCancellable: AnyCancellable?
-    private var settingsCancellable: AnyCancellable?
+    private var cancellables: Set<AnyCancellable> = []
 
     init(monitor: SystemMonitor, settings: PulseSettings) {
         self.monitor = monitor
@@ -33,7 +32,13 @@ final class StatusBarController: NSObject {
         button.action = #selector(togglePopover(_:))
         button.sendAction(on: [.leftMouseUp])
 
-        let hostingView = NSHostingView(rootView: MenuBarStatusView(snapshot: monitor.snapshot, settings: settings))
+        let hostingView = NSHostingView(
+            rootView: MenuBarStatusView(
+                snapshot: monitor.snapshot,
+                settings: settings,
+                presentation: resolvePresentation()
+            )
+        )
         hostingView.translatesAutoresizingMaskIntoConstraints = false
         button.addSubview(hostingView)
 
@@ -56,20 +61,27 @@ final class StatusBarController: NSObject {
     }
 
     private func bindSnapshot() {
-        snapshotCancellable = monitor.$snapshot
+        monitor.$snapshot
             .receive(on: RunLoop.main)
             .sink { [weak self] snapshot in
                 self?.updateStatusView(with: snapshot)
             }
+            .store(in: &cancellables)
 
-        settingsCancellable = settings.$enabledCategories
+        Publishers.CombineLatest4(
+            settings.$enabledCategories,
+            settings.$statusBarOrder,
+            settings.$statusBarDisplayMode,
+            settings.$statusBarNetworkDisplayStyle
+        )
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
+            .sink { [weak self] _, _, _, _ in
                 guard let self else {
                     return
                 }
                 self.updateStatusView(with: self.monitor.snapshot)
             }
+            .store(in: &cancellables)
     }
 
     private func updateStatusView(with snapshot: SystemSnapshot) {
@@ -77,9 +89,57 @@ final class StatusBarController: NSObject {
             return
         }
 
-        statusHostingView.rootView = MenuBarStatusView(snapshot: snapshot, settings: settings)
-        let width = statusHostingView.fittingSize.width + 8
+        let presentation = resolvePresentation()
+        statusHostingView.rootView = MenuBarStatusView(
+            snapshot: snapshot,
+            settings: settings,
+            presentation: presentation
+        )
+        let width = presentation.estimatedWidth(for: settings.statusBarCategories) + 8
         statusItem.length = max(width, NSStatusItem.variableLength)
+    }
+
+    private func resolvePresentation() -> MenuBarPresentation {
+        let preferred = MenuBarPresentation(
+            displayMode: settings.statusBarDisplayMode,
+            networkDisplayStyle: settings.statusBarNetworkDisplayStyle
+        )
+        let categories = settings.statusBarCategories
+        let widthBudget = statusItemWidthBudget()
+        let candidates = fallbackPresentations(from: preferred)
+
+        for presentation in candidates where presentation.estimatedWidth(for: categories) <= widthBudget {
+            return presentation
+        }
+
+        return candidates.last ?? preferred
+    }
+
+    private func fallbackPresentations(from preferred: MenuBarPresentation) -> [MenuBarPresentation] {
+        var candidates: [MenuBarPresentation] = [preferred]
+
+        let compactPreferred = MenuBarPresentation(
+            displayMode: .compact,
+            networkDisplayStyle: preferred.networkDisplayStyle
+        )
+        let singleLinePreferred = MenuBarPresentation(
+            displayMode: preferred.displayMode,
+            networkDisplayStyle: .singleLine
+        )
+        let mostCompact = MenuBarPresentation(displayMode: .compact, networkDisplayStyle: .singleLine)
+
+        for candidate in [compactPreferred, singleLinePreferred, mostCompact] where !candidates.contains(candidate) {
+            candidates.append(candidate)
+        }
+
+        return candidates
+    }
+
+    private func statusItemWidthBudget() -> CGFloat {
+        let screenWidth = statusItem.button?.window?.screen?.visibleFrame.width
+            ?? NSScreen.main?.visibleFrame.width
+            ?? 1440
+        return min(max(screenWidth * 0.14, 170), 230)
     }
 
     @objc

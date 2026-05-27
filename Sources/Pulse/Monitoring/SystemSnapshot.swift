@@ -258,23 +258,25 @@ enum MetricFormatter {
     }
 
     static func bytesPerSecond(_ value: Double) -> String {
-        let clamped = max(0, value)
-        return "\(ByteCountFormatter.string(fromByteCount: Int64(clamped.rounded()), countStyle: .binary))/s"
+        let (displayValue, unitIndex) = rateComponents(for: value, minimumUnitIndex: 1)
+        let units = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"]
+
+        let formattedValue: String
+        if displayValue >= 100 || abs(displayValue.rounded() - displayValue) < 0.05 {
+            formattedValue = "\(Int(displayValue.rounded()))"
+        } else {
+            formattedValue = String(format: "%.1f", displayValue)
+        }
+
+        return "\(formattedValue) \(units[unitIndex])"
     }
 
     static func compactRate(_ value: Double) -> String {
-        let clamped = max(0, value)
+        let (displayValue, unitIndex) = rateComponents(for: value, minimumUnitIndex: 1)
         let units = ["B", "K", "M", "G", "T"]
-        var displayValue = clamped
-        var unitIndex = 0
-
-        while displayValue >= 1024, unitIndex < units.count - 1 {
-            displayValue /= 1024
-            unitIndex += 1
-        }
 
         let formattedValue: String
-        if unitIndex == 0 || displayValue >= 10 {
+        if displayValue >= 10 || abs(displayValue.rounded() - displayValue) < 0.05 {
             formattedValue = "\(Int(displayValue.rounded()))"
         } else {
             formattedValue = String(format: "%.1f", displayValue)
@@ -301,6 +303,24 @@ enum MetricFormatter {
         }
 
         return "999 MB/s"
+    }
+
+    private static func rateComponents(for value: Double, minimumUnitIndex: Int) -> (Double, Int) {
+        let unitsCount = 5
+        var displayValue = max(0, value)
+        var unitIndex = 0
+
+        while displayValue >= 1024, unitIndex < unitsCount - 1 {
+            displayValue /= 1024
+            unitIndex += 1
+        }
+
+        while unitIndex < minimumUnitIndex, unitIndex < unitsCount - 1 {
+            displayValue /= 1024
+            unitIndex += 1
+        }
+
+        return (displayValue, unitIndex)
     }
 
     static func timeRemaining(minutes: Int) -> String {

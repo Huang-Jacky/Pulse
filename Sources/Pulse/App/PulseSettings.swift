@@ -11,6 +11,38 @@ struct MonitorConfiguration: Sendable, Equatable {
     }
 }
 
+enum StatusBarDisplayMode: String, CaseIterable, Identifiable {
+    case standard
+    case compact
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .standard:
+            return "标准"
+        case .compact:
+            return "紧凑"
+        }
+    }
+}
+
+enum StatusBarNetworkDisplayStyle: String, CaseIterable, Identifiable {
+    case dualLine
+    case singleLine
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .dualLine:
+            return "双行"
+        case .singleLine:
+            return "单行"
+        }
+    }
+}
+
 enum LaunchAtLoginStatus: Equatable {
     case enabled
     case disabled
@@ -24,17 +56,25 @@ final class PulseSettings: ObservableObject {
         static let refreshIntervalSeconds = "pulse.refreshIntervalSeconds"
         static let legacyRefreshIntervalMinutes = "pulse.refreshIntervalMinutes"
         static let adaptiveRefreshEnabled = "pulse.adaptiveRefreshEnabled"
+        static let statusBarOrder = "pulse.statusBarOrder"
+        static let statusBarDisplayMode = "pulse.statusBarDisplayMode"
+        static let statusBarNetworkDisplayStyle = "pulse.statusBarNetworkDisplayStyle"
     }
 
     nonisolated static let defaultEnabledCategories = Set(SystemSnapshot.DetailCategory.allCases)
     nonisolated static let orderedCategories = SystemSnapshot.DetailCategory.allCases
-    nonisolated static let statusBarOrder: [SystemSnapshot.DetailCategory] = [.network, .disk, .cpu, .memory]
+    nonisolated static let defaultStatusBarOrder: [SystemSnapshot.DetailCategory] = [.network, .disk, .cpu, .memory]
     nonisolated static let defaultRefreshIntervalSeconds = 1
     nonisolated static let defaultAdaptiveRefreshEnabled = true
+    nonisolated static let defaultStatusBarDisplayMode: StatusBarDisplayMode = .standard
+    nonisolated static let defaultStatusBarNetworkDisplayStyle: StatusBarNetworkDisplayStyle = .dualLine
 
     @Published private(set) var enabledCategories: Set<SystemSnapshot.DetailCategory>
+    @Published private(set) var statusBarOrder: [SystemSnapshot.DetailCategory]
     @Published private(set) var refreshIntervalSeconds: Int
     @Published private(set) var adaptiveRefreshEnabled: Bool
+    @Published private(set) var statusBarDisplayMode: StatusBarDisplayMode
+    @Published private(set) var statusBarNetworkDisplayStyle: StatusBarNetworkDisplayStyle
     @Published private(set) var launchAtLoginStatus: LaunchAtLoginStatus
     @Published private(set) var launchAtLoginErrorMessage: String?
 
@@ -46,6 +86,9 @@ final class PulseSettings: ObservableObject {
         let storedCategories = Set((userDefaults.array(forKey: Key.enabledCategories) as? [String] ?? []))
         let resolvedCategories = Set(Self.orderedCategories.filter { storedCategories.contains($0.rawValue) })
         enabledCategories = resolvedCategories.isEmpty ? Self.defaultEnabledCategories : resolvedCategories
+        statusBarOrder = Self.resolveStatusBarOrder(
+            from: userDefaults.array(forKey: Key.statusBarOrder) as? [String] ?? []
+        )
 
         if let storedSeconds = userDefaults.object(forKey: Key.refreshIntervalSeconds) as? Int {
             refreshIntervalSeconds = Self.clampRefreshInterval(storedSeconds)
@@ -64,6 +107,20 @@ final class PulseSettings: ObservableObject {
             adaptiveRefreshEnabled = Self.defaultAdaptiveRefreshEnabled
         }
 
+        if let rawValue = userDefaults.string(forKey: Key.statusBarDisplayMode),
+           let displayMode = StatusBarDisplayMode(rawValue: rawValue) {
+            statusBarDisplayMode = displayMode
+        } else {
+            statusBarDisplayMode = Self.defaultStatusBarDisplayMode
+        }
+
+        if let rawValue = userDefaults.string(forKey: Key.statusBarNetworkDisplayStyle),
+           let displayStyle = StatusBarNetworkDisplayStyle(rawValue: rawValue) {
+            statusBarNetworkDisplayStyle = displayStyle
+        } else {
+            statusBarNetworkDisplayStyle = Self.defaultStatusBarNetworkDisplayStyle
+        }
+
         launchAtLoginStatus = Self.resolveLaunchAtLoginStatus()
         launchAtLoginErrorMessage = nil
     }
@@ -80,7 +137,7 @@ final class PulseSettings: ObservableObject {
     }
 
     var statusBarCategories: [SystemSnapshot.DetailCategory] {
-        Self.statusBarOrder.filter { enabledCategories.contains($0) }
+        statusBarOrder.filter { enabledCategories.contains($0) }
     }
 
     var launchesAtLogin: Bool {
@@ -159,6 +216,53 @@ final class PulseSettings: ObservableObject {
         userDefaults.set(isEnabled, forKey: Key.adaptiveRefreshEnabled)
     }
 
+    func canMoveStatusBarCategory(_ category: SystemSnapshot.DetailCategory, by delta: Int) -> Bool {
+        guard let index = statusBarOrder.firstIndex(of: category) else {
+            return false
+        }
+
+        let destination = index + delta
+        return statusBarOrder.indices.contains(destination)
+    }
+
+    func moveStatusBarCategory(_ category: SystemSnapshot.DetailCategory, by delta: Int) {
+        guard let index = statusBarOrder.firstIndex(of: category) else {
+            return
+        }
+
+        let destination = index + delta
+        guard statusBarOrder.indices.contains(destination) else {
+            return
+        }
+
+        var updatedOrder = statusBarOrder
+        updatedOrder.swapAt(index, destination)
+        guard updatedOrder != statusBarOrder else {
+            return
+        }
+
+        statusBarOrder = updatedOrder
+        userDefaults.set(updatedOrder.map(\.rawValue), forKey: Key.statusBarOrder)
+    }
+
+    func setStatusBarDisplayMode(_ mode: StatusBarDisplayMode) {
+        guard statusBarDisplayMode != mode else {
+            return
+        }
+
+        statusBarDisplayMode = mode
+        userDefaults.set(mode.rawValue, forKey: Key.statusBarDisplayMode)
+    }
+
+    func setStatusBarNetworkDisplayStyle(_ style: StatusBarNetworkDisplayStyle) {
+        guard statusBarNetworkDisplayStyle != style else {
+            return
+        }
+
+        statusBarNetworkDisplayStyle = style
+        userDefaults.set(style.rawValue, forKey: Key.statusBarNetworkDisplayStyle)
+    }
+
     func refreshLaunchAtLoginStatus() {
         launchAtLoginStatus = Self.resolveLaunchAtLoginStatus()
     }
@@ -191,6 +295,14 @@ final class PulseSettings: ObservableObject {
 
     private static func clampRefreshInterval(_ seconds: Int) -> Int {
         min(max(seconds, 1), 30)
+    }
+
+    private static func resolveStatusBarOrder(from rawValues: [String]) -> [SystemSnapshot.DetailCategory] {
+        var resolved = rawValues.compactMap(SystemSnapshot.DetailCategory.init(rawValue:))
+        for category in defaultStatusBarOrder where !resolved.contains(category) {
+            resolved.append(category)
+        }
+        return resolved
     }
 
     private static func resolveLaunchAtLoginStatus() -> LaunchAtLoginStatus {

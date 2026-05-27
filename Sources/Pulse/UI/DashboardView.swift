@@ -29,7 +29,6 @@ struct DashboardView: View {
                 CategoryContentView(
                     snapshot: snapshot,
                     selectedTab: selectedTab,
-                    monitor: monitor,
                     settings: settings
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -148,7 +147,6 @@ private struct DetailCategoryButtonStyle: ButtonStyle {
 private struct CategoryContentView: View {
     let snapshot: SystemSnapshot
     let selectedTab: DashboardTab
-    @ObservedObject var monitor: SystemMonitor
     @ObservedObject var settings: PulseSettings
 
     var body: some View {
@@ -165,13 +163,12 @@ private struct CategoryContentView: View {
                 NetworkCategoryView(snapshot: snapshot)
             }
         case .settings:
-            SettingsCategoryView(monitor: monitor, settings: settings)
+            SettingsCategoryView(settings: settings)
         }
     }
 }
 
 private struct SettingsCategoryView: View {
-    @ObservedObject var monitor: SystemMonitor
     @ObservedObject var settings: PulseSettings
 
     var body: some View {
@@ -196,6 +193,66 @@ private struct SettingsCategoryView: View {
                             .font(.system(size: 9.5, weight: .medium, design: .rounded))
                             .foregroundStyle(.secondary)
                             .padding(.top, 4)
+                    }
+                }
+
+                SectionCard(title: "菜单栏显示") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("仅影响菜单栏展示顺序和样式。")
+                            .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                            .foregroundStyle(.secondary)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(Array(settings.statusBarOrder.enumerated()), id: \.element) { index, category in
+                                StatusBarOrderRow(
+                                    title: category.title,
+                                    isEnabled: settings.isEnabled(category),
+                                    canMoveUp: index > 0,
+                                    canMoveDown: index < settings.statusBarOrder.count - 1,
+                                    isLast: index == settings.statusBarOrder.count - 1,
+                                    moveUp: { settings.moveStatusBarCategory(category, by: -1) },
+                                    moveDown: { settings.moveStatusBarCategory(category, by: 1) }
+                                )
+                            }
+                        }
+
+                        PickerSettingRow(title: "展示样式") {
+                            Picker(
+                                "展示样式",
+                                selection: Binding(
+                                    get: { settings.statusBarDisplayMode },
+                                    set: { settings.setStatusBarDisplayMode($0) }
+                                )
+                            ) {
+                                ForEach(StatusBarDisplayMode.allCases) { mode in
+                                    Text(mode.title).tag(mode)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .frame(width: 108)
+                        }
+
+                        PickerSettingRow(title: "网络显示") {
+                            Picker(
+                                "网络显示",
+                                selection: Binding(
+                                    get: { settings.statusBarNetworkDisplayStyle },
+                                    set: { settings.setStatusBarNetworkDisplayStyle($0) }
+                                )
+                            ) {
+                                ForEach(StatusBarNetworkDisplayStyle.allCases) { style in
+                                    Text(style.title).tag(style)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .frame(width: 108)
+                        }
+
+                        Text("宽度不足时会自动切换到更紧凑的布局。")
+                            .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                            .foregroundStyle(.secondary)
                     }
                 }
 
@@ -358,6 +415,82 @@ private struct ToggleSettingRow: View {
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color.white.opacity(isToggleEnabled ? 0.035 : 0.05))
+        )
+        .overlay(alignment: .bottom) {
+            if !isLast {
+                Rectangle()
+                    .fill(Color.white.opacity(0.05))
+                    .frame(height: 1)
+                    .padding(.horizontal, 12)
+                    .offset(y: 4)
+            }
+        }
+    }
+}
+
+private struct PickerSettingRow<Content: View>: View {
+    let title: String
+    @ViewBuilder let control: Content
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+            Spacer(minLength: 12)
+            control
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct StatusBarOrderRow: View {
+    let title: String
+    let isEnabled: Bool
+    let canMoveUp: Bool
+    let canMoveDown: Bool
+    let isLast: Bool
+    let moveUp: () -> Void
+    let moveDown: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                Text(isEnabled ? "当前会显示在菜单栏" : "当前已关闭，仅调整顺序")
+                    .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 6) {
+                Button(action: moveUp) {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 9, weight: .bold))
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .disabled(!canMoveUp)
+                .opacity(canMoveUp ? 1 : 0.35)
+
+                Button(action: moveDown) {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .disabled(!canMoveDown)
+                .opacity(canMoveDown ? 1 : 0.35)
+            }
+            .foregroundStyle(Color.white.opacity(0.82))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.white.opacity(0.035))
         )
         .overlay(alignment: .bottom) {
             if !isLast {
