@@ -25,6 +25,7 @@ final class UpdateViewModel: ObservableObject {
         case checking
         case upToDate(version: String)
         case updateAvailable(version: String, releaseURL: URL)
+        case aheadOfRelease(currentVersion: String, releaseVersion: String)
         case failed(message: String)
         case unconfigured
     }
@@ -99,9 +100,12 @@ final class UpdateViewModel: ObservableObject {
             }
 
             let currentVersion = AppMetadata.currentVersion
-            if Self.compareVersion(currentVersion, latestVersion) == .orderedAscending {
+            switch Self.compareVersion(currentVersion, latestVersion) {
+            case .orderedAscending:
                 status = .updateAvailable(version: latestVersion, releaseURL: release.htmlURL)
-            } else {
+            case .orderedDescending:
+                status = .aheadOfRelease(currentVersion: currentVersion, releaseVersion: latestVersion)
+            case .orderedSame:
                 status = .upToDate(version: currentVersion)
             }
         } catch {

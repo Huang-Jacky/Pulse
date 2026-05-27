@@ -357,19 +357,40 @@ private struct SettingsCategoryView: View {
 
                 if let message = updateStatusMessage {
                     HStack(alignment: .center, spacing: 8) {
+                        if isCheckingForUpdates {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(updateStatusColor)
+                        } else {
+                            Image(systemName: updateStatusIcon)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(updateStatusColor)
+                        }
+
                         Text(message)
                             .font(.system(size: 9.5, weight: .medium, design: .rounded))
                             .foregroundStyle(updateStatusColor)
                             .lineLimit(2)
 
+                        Spacer(minLength: 8)
+
                         if case .updateAvailable = updateViewModel.status {
-                            Spacer(minLength: 8)
                             Button("前往下载") {
                                 updateViewModel.openLatestReleasePage()
                             }
                             .font(.system(size: 10, weight: .semibold, design: .rounded))
                         }
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(updateStatusBackgroundColor)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(updateStatusBorderColor, lineWidth: 1)
+                            )
+                    )
                 }
             }
             .foregroundStyle(.secondary)
@@ -402,6 +423,8 @@ private struct SettingsCategoryView: View {
             return "当前已是最新版本 \(version)。"
         case let .updateAvailable(version, _):
             return "发现新版本 \(version)。"
+        case let .aheadOfRelease(currentVersion, releaseVersion):
+            return "当前版本 \(currentVersion)，正式版最新为 \(releaseVersion)。"
         case let .failed(message):
             return message
         case .unconfigured:
@@ -409,14 +432,65 @@ private struct SettingsCategoryView: View {
         }
     }
 
+    private var updateStatusIcon: String {
+        switch updateViewModel.status {
+        case .idle, .checking:
+            return "arrow.triangle.2.circlepath"
+        case .upToDate:
+            return "checkmark.circle.fill"
+        case .updateAvailable:
+            return "arrow.down.circle.fill"
+        case .aheadOfRelease:
+            return "info.circle.fill"
+        case .failed, .unconfigured:
+            return "exclamationmark.triangle.fill"
+        }
+    }
+
     private var updateStatusColor: Color {
         switch updateViewModel.status {
+        case .upToDate:
+            return Palette.green
+        case .aheadOfRelease:
+            return Palette.blue
         case .failed:
             return Palette.critical
         case .updateAvailable:
             return Palette.warning
         default:
             return .secondary
+        }
+    }
+
+    private var updateStatusBackgroundColor: Color {
+        switch updateViewModel.status {
+        case .upToDate:
+            return Palette.green.opacity(0.14)
+        case .aheadOfRelease:
+            return Palette.blue.opacity(0.14)
+        case .failed:
+            return Palette.critical.opacity(0.16)
+        case .updateAvailable:
+            return Palette.warning.opacity(0.16)
+        case .checking:
+            return Color.white.opacity(0.08)
+        case .unconfigured:
+            return Color.white.opacity(0.06)
+        case .idle:
+            return .clear
+        }
+    }
+
+    private var updateStatusBorderColor: Color {
+        switch updateViewModel.status {
+        case .upToDate, .aheadOfRelease, .failed, .updateAvailable:
+            return updateStatusColor.opacity(0.32)
+        case .checking:
+            return Color.white.opacity(0.12)
+        case .unconfigured:
+            return Color.white.opacity(0.10)
+        case .idle:
+            return .clear
         }
     }
 }
