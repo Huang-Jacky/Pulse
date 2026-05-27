@@ -1,5 +1,22 @@
 import SwiftUI
 
+private enum MenuBarPalette {
+    static let normal = Color.primary
+    static let warning = Color(red: 0.98, green: 0.63, blue: 0.18)
+    static let critical = Color(red: 0.96, green: 0.27, blue: 0.21)
+
+    static func color(for alertLevel: SystemSnapshot.MetricAlertLevel, normal: Color) -> Color {
+        switch alertLevel {
+        case .normal:
+            return normal
+        case .warning:
+            return warning
+        case .critical:
+            return critical
+        }
+    }
+}
+
 struct MenuBarPresentation: Equatable {
     let displayMode: StatusBarDisplayMode
     let networkDisplayStyle: StatusBarNetworkDisplayStyle
@@ -58,6 +75,8 @@ struct MenuBarStatusView: View {
                         title: "CPU",
                         compactTitle: "C",
                         value: snapshot.cpu.summary,
+                        alertLevel: snapshot.cpu.alertLevel,
+                        normalColor: MenuBarPalette.normal,
                         mode: presentation.displayMode
                     )
                 case .memory:
@@ -65,6 +84,8 @@ struct MenuBarStatusView: View {
                         title: "MEM",
                         compactTitle: "M",
                         value: snapshot.memory.summary,
+                        alertLevel: snapshot.memory.alertLevel,
+                        normalColor: MenuBarPalette.normal,
                         mode: presentation.displayMode
                     )
                 case .disk:
@@ -72,6 +93,8 @@ struct MenuBarStatusView: View {
                         title: "SSD",
                         compactTitle: "D",
                         value: snapshot.disk.summary,
+                        alertLevel: snapshot.disk.alertLevel,
+                        normalColor: MenuBarPalette.normal,
                         mode: presentation.displayMode
                     )
                 case .network:
@@ -115,6 +138,8 @@ private struct StatusBarMetricColumn: View {
     let title: String
     let compactTitle: String
     let value: String
+    let alertLevel: SystemSnapshot.MetricAlertLevel
+    let normalColor: Color
     let mode: StatusBarDisplayMode
 
     var body: some View {
@@ -129,6 +154,7 @@ private struct StatusBarMetricColumn: View {
                     .font(.system(size: 11.5, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .lineLimit(1)
+                    .foregroundStyle(alertColor)
                     .frame(width: 36, alignment: .leading)
             }
         case .compact:
@@ -141,9 +167,14 @@ private struct StatusBarMetricColumn: View {
                     .monospacedDigit()
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
+                    .foregroundStyle(alertColor)
             }
             .frame(width: 26, alignment: .leading)
         }
+    }
+
+    private var alertColor: Color {
+        MenuBarPalette.color(for: alertLevel, normal: normalColor)
     }
 }
 

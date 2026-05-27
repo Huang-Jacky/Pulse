@@ -516,7 +516,8 @@ private struct CPUCategoryView: View {
                 title: "CPU",
                 headline: snapshot.cpu.summary,
                 trailing: snapshot.cpu.detail,
-                accent: Palette.blue
+                accent: Palette.blue,
+                headlineColor: Palette.alertTextColor(for: snapshot.cpu.alertLevel)
             ) {
                 VStack(spacing: 10) {
                     CPUHistoryChart(history: snapshot.cpuDetails.history)
@@ -548,7 +549,8 @@ private struct MemoryCategoryView: View {
                 title: "内存",
                 headline: snapshot.memory.summary,
                 trailing: snapshot.memory.detail,
-                accent: Palette.green
+                accent: Palette.green,
+                headlineColor: Palette.alertTextColor(for: snapshot.memory.alertLevel)
             ) {
                 VStack(spacing: 10) {
                     HStack(spacing: 10) {
@@ -595,7 +597,8 @@ private struct DiskCategoryView: View {
                 title: "磁盘",
                 headline: snapshot.disk.summary,
                 trailing: snapshot.disk.detail,
-                accent: Palette.blue
+                accent: Palette.blue,
+                headlineColor: Palette.alertTextColor(for: snapshot.disk.alertLevel)
             ) {
                 HStack(spacing: 10) {
                     RingMetricView(
@@ -671,6 +674,7 @@ private struct HeroCard<Content: View>: View {
     let headline: String
     let trailing: String
     let accent: Color
+    var headlineColor: Color = .white
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -686,6 +690,7 @@ private struct HeroCard<Content: View>: View {
                     Text(headline)
                         .font(.system(size: 18, weight: .bold, design: .rounded))
                         .monospacedDigit()
+                        .foregroundStyle(headlineColor)
                     Text(trailing)
                         .font(.system(size: 10, weight: .medium, design: .rounded))
                         .foregroundStyle(.secondary)
@@ -1017,6 +1022,19 @@ private enum Palette {
     static let blue = Color(red: 0.18, green: 0.52, blue: 0.98)
     static let pink = Color(red: 0.97, green: 0.34, blue: 0.63)
     static let green = Color(red: 0.20, green: 0.76, blue: 0.56)
+    static let warning = Color(red: 0.98, green: 0.63, blue: 0.18)
+    static let critical = Color(red: 0.96, green: 0.27, blue: 0.21)
+
+    static func alertTextColor(for alertLevel: SystemSnapshot.MetricAlertLevel) -> Color {
+        switch alertLevel {
+        case .normal:
+            return .white
+        case .warning:
+            return warning
+        case .critical:
+            return critical
+        }
+    }
 }
 
 private enum AppMetadata {

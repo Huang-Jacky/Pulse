@@ -343,7 +343,8 @@ private actor SystemSampler {
                 value: reading.totalUsage,
                 summary: MetricFormatter.percent(reading.totalUsage),
                 detail: "用户 \(MetricFormatter.percent(reading.userUsage)) · 系统 \(MetricFormatter.percent(reading.systemUsage))",
-                accent: "cpu"
+                accent: "cpu",
+                alertLevel: MetricFormatter.alertLevel(for: .cpu, value: reading.totalUsage)
             ),
             userUsage: reading.userUsage,
             systemUsage: reading.systemUsage,
@@ -375,7 +376,8 @@ private actor SystemSampler {
                     value: 0,
                     summary: "--",
                     detail: "读取失败",
-                    accent: "memory"
+                    accent: "memory",
+                    alertLevel: .normal
                 )
             )
         }
@@ -400,7 +402,8 @@ private actor SystemSampler {
                 value: ratio,
                 summary: MetricFormatter.percent(ratio),
                 detail: "\(MetricFormatter.bytes(used)) / \(MetricFormatter.bytes(totalMemory))",
-                accent: "memory"
+                accent: "memory",
+                alertLevel: MetricFormatter.alertLevel(for: .memory, value: ratio)
             ),
             used: used,
             total: totalMemory,
@@ -453,7 +456,8 @@ private actor SystemSampler {
                     value: ratio,
                     summary: MetricFormatter.percent(ratio),
                     detail: "\(MetricFormatter.diskBytes(used)) / \(MetricFormatter.diskBytes(total))",
-                    accent: "disk"
+                    accent: "disk",
+                    alertLevel: MetricFormatter.alertLevel(for: .disk, value: ratio)
                 ),
                 total: total,
                 used: used,
@@ -467,7 +471,8 @@ private actor SystemSampler {
                     value: 0,
                     summary: "--",
                     detail: "读取失败",
-                    accent: "disk"
+                    accent: "disk",
+                    alertLevel: .normal
                 )
             )
         }

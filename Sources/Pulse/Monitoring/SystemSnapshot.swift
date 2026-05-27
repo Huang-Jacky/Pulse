@@ -1,6 +1,12 @@
 import Foundation
 
 struct SystemSnapshot: Sendable {
+    enum MetricAlertLevel: Sendable {
+        case normal
+        case warning
+        case critical
+    }
+
     enum DetailCategory: String, CaseIterable, Identifiable, Sendable {
         case cpu
         case memory
@@ -31,6 +37,7 @@ struct SystemSnapshot: Sendable {
         let summary: String
         let detail: String
         let accent: String
+        let alertLevel: MetricAlertLevel
     }
 
     struct NetworkMetric: Sendable {
@@ -158,7 +165,8 @@ struct SystemSnapshot: Sendable {
             value: 0,
             summary: "--",
             detail: "等待采样",
-            accent: "cpu"
+            accent: "cpu",
+            alertLevel: .normal
         ),
         memory: GaugeMetric(
             category: .memory,
@@ -166,7 +174,8 @@ struct SystemSnapshot: Sendable {
             value: 0,
             summary: "--",
             detail: "等待采样",
-            accent: "memory"
+            accent: "memory",
+            alertLevel: .normal
         ),
         disk: GaugeMetric(
             category: .disk,
@@ -174,7 +183,8 @@ struct SystemSnapshot: Sendable {
             value: 0,
             summary: "--",
             detail: "等待采样",
-            accent: "disk"
+            accent: "disk",
+            alertLevel: .normal
         ),
         battery: nil,
         network: NetworkMetric(
@@ -240,6 +250,29 @@ struct SystemSnapshot: Sendable {
 }
 
 enum MetricFormatter {
+    static func alertLevel(for category: SystemSnapshot.DetailCategory, value: Double) -> SystemSnapshot.MetricAlertLevel {
+        switch category {
+        case .cpu, .memory:
+            if value >= 0.9 {
+                return .critical
+            }
+            if value >= 0.8 {
+                return .warning
+            }
+            return .normal
+        case .disk:
+            if value >= 0.95 {
+                return .critical
+            }
+            if value >= 0.9 {
+                return .warning
+            }
+            return .normal
+        case .network:
+            return .normal
+        }
+    }
+
     static func percent(_ value: Double) -> String {
         let clamped = max(0, min(1, value))
         return "\(Int((clamped * 100).rounded()))%"
