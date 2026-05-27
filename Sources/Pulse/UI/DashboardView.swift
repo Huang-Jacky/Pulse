@@ -5,6 +5,7 @@ struct DashboardView: View {
     @ObservedObject var monitor: SystemMonitor
     @ObservedObject var settings: PulseSettings
     @State private var selectedTab: DashboardTab = .metric(.cpu)
+    @StateObject private var updateViewModel = UpdateViewModel()
 
     private var availableTabs: [DashboardTab] {
         settings.detailCategories.map(DashboardTab.metric) + [.settings]
@@ -29,7 +30,8 @@ struct DashboardView: View {
                 CategoryContentView(
                     snapshot: snapshot,
                     selectedTab: selectedTab,
-                    settings: settings
+                    settings: settings,
+                    updateViewModel: updateViewModel
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.bottom, 2)
@@ -148,6 +150,7 @@ private struct CategoryContentView: View {
     let snapshot: SystemSnapshot
     let selectedTab: DashboardTab
     @ObservedObject var settings: PulseSettings
+    @ObservedObject var updateViewModel: UpdateViewModel
 
     var body: some View {
         switch selectedTab {
@@ -163,13 +166,14 @@ private struct CategoryContentView: View {
                 NetworkCategoryView(snapshot: snapshot)
             }
         case .settings:
-            SettingsCategoryView(settings: settings)
+            SettingsCategoryView(settings: settings, updateViewModel: updateViewModel)
         }
     }
 }
 
 private struct SettingsCategoryView: View {
     @ObservedObject var settings: PulseSettings
+    @ObservedObject var updateViewModel: UpdateViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -333,11 +337,40 @@ private struct SettingsCategoryView: View {
 
             Spacer(minLength: 0)
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(AppMetadata.versionDescription)
-                    .font(.system(size: 9.5, weight: .medium, design: .rounded))
-                Text("Copyright © 2026 jackey.huang")
-                    .font(.system(size: 9.5, weight: .medium, design: .rounded))
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(AppMetadata.versionDescription)
+                            .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                        Text("Copyright © 2026 jackey.huang")
+                            .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                    }
+
+                    Spacer(minLength: 10)
+
+                    Button(updateButtonTitle) {
+                        updateViewModel.checkForUpdates()
+                    }
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .disabled(isCheckingForUpdates)
+                }
+
+                if let message = updateStatusMessage {
+                    HStack(alignment: .center, spacing: 8) {
+                        Text(message)
+                            .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                            .foregroundStyle(updateStatusColor)
+                            .lineLimit(2)
+
+                        if case .updateAvailable = updateViewModel.status {
+                            Spacer(minLength: 8)
+                            Button("前往下载") {
+                                updateViewModel.openLatestReleasePage()
+                            }
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        }
+                    }
+                }
             }
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -346,6 +379,45 @@ private struct SettingsCategoryView: View {
         }
         .frame(maxWidth: .infinity, minHeight: 436, alignment: .topLeading)
         .onAppear(perform: settings.refreshLaunchAtLoginStatus)
+    }
+
+    private var isCheckingForUpdates: Bool {
+        if case .checking = updateViewModel.status {
+            return true
+        }
+        return false
+    }
+
+    private var updateButtonTitle: String {
+        isCheckingForUpdates ? "检查中..." : "检查更新"
+    }
+
+    private var updateStatusMessage: String? {
+        switch updateViewModel.status {
+        case .idle:
+            return nil
+        case .checking:
+            return "正在检查最新版本..."
+        case let .upToDate(version):
+            return "当前已是最新版本 \(version)。"
+        case let .updateAvailable(version, _):
+            return "发现新版本 \(version)。"
+        case let .failed(message):
+            return message
+        case .unconfigured:
+            return "更新源未配置，待 GitHub Releases 准备后启用。"
+        }
+    }
+
+    private var updateStatusColor: Color {
+        switch updateViewModel.status {
+        case .failed:
+            return Palette.critical
+        case .updateAvailable:
+            return Palette.warning
+        default:
+            return .secondary
+        }
     }
 }
 
@@ -1037,9 +1109,18 @@ private enum Palette {
     }
 }
 
-private enum AppMetadata {
+enum AppMetadata {
+    static let updateRepository = UpdateRepositoryConfiguration(
+        owner: "Huang-Jacky",
+        repository: "Pulse"
+    )
+
+    static var currentVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "开发版"
+    }
+
     static var versionDescription: String {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "开发版"
+        let version = currentVersion
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
 
         if let build, build != version {
