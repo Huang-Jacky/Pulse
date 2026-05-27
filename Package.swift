@@ -18,6 +18,8 @@ let package = Package(
             name: "Pulse",
             linkerSettings: [
                 .linkedFramework("AppKit"),
+                .linkedFramework("CoreLocation"),
+                .linkedFramework("CoreWLAN"),
                 .linkedFramework("IOKit"),
                 .linkedFramework("ServiceManagement")
             ]

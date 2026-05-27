@@ -6,14 +6,16 @@ import SwiftUI
 final class StatusBarController: NSObject {
     private let monitor: SystemMonitor
     private let settings: PulseSettings
+    private let locationPermissionManager: LocationPermissionManager
     private let popover = NSPopover()
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private var statusHostingView: NSHostingView<MenuBarStatusView>?
     private var cancellables: Set<AnyCancellable> = []
 
-    init(monitor: SystemMonitor, settings: PulseSettings) {
+    init(monitor: SystemMonitor, settings: PulseSettings, locationPermissionManager: LocationPermissionManager) {
         self.monitor = monitor
         self.settings = settings
+        self.locationPermissionManager = locationPermissionManager
         super.init()
         configureStatusItem()
         configurePopover()
@@ -147,6 +149,7 @@ final class StatusBarController: NSObject {
         if popover.isShown {
             popover.performClose(sender)
         } else {
+            locationPermissionManager.requestWiFiAccessIfNeeded()
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
             monitor.setDashboardVisible(true)
             popover.contentViewController?.view.window?.becomeKey()

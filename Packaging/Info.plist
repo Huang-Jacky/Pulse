@@ -28,6 +28,10 @@
     <string>13.0</string>
     <key>LSUIElement</key>
     <true/>
+    <key>NSLocationUsageDescription</key>
+    <string>用于读取当前 Wi-Fi 网络名称、信号和链路信息。</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>用于读取当前 Wi-Fi 网络名称、信号和链路信息。</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>

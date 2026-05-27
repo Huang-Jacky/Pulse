@@ -59,10 +59,12 @@ final class PulseSettings: ObservableObject {
         static let statusBarOrder = "pulse.statusBarOrder"
         static let statusBarDisplayMode = "pulse.statusBarDisplayMode"
         static let statusBarNetworkDisplayStyle = "pulse.statusBarNetworkDisplayStyle"
+        static let didMigrateBatteryCategory = "pulse.didMigrateBatteryCategory"
     }
 
     nonisolated static let defaultEnabledCategories = Set(SystemSnapshot.DetailCategory.allCases)
     nonisolated static let orderedCategories = SystemSnapshot.DetailCategory.allCases
+    nonisolated static let statusBarSupportedCategories = orderedCategories.filter(\.supportsStatusBar)
     nonisolated static let defaultStatusBarOrder: [SystemSnapshot.DetailCategory] = [.network, .disk, .cpu, .memory]
     nonisolated static let defaultRefreshIntervalSeconds = 1
     nonisolated static let defaultAdaptiveRefreshEnabled = true
@@ -84,7 +86,18 @@ final class PulseSettings: ObservableObject {
         self.userDefaults = userDefaults
 
         let storedCategories = Set((userDefaults.array(forKey: Key.enabledCategories) as? [String] ?? []))
-        let resolvedCategories = Set(Self.orderedCategories.filter { storedCategories.contains($0.rawValue) })
+        var resolvedCategories = Set(Self.orderedCategories.filter { storedCategories.contains($0.rawValue) })
+        if !storedCategories.isEmpty,
+           !userDefaults.bool(forKey: Key.didMigrateBatteryCategory) {
+            resolvedCategories.insert(.battery)
+            userDefaults.set(true, forKey: Key.didMigrateBatteryCategory)
+            userDefaults.set(
+                Self.orderedCategories
+                    .filter { resolvedCategories.contains($0) }
+                    .map(\.rawValue),
+                forKey: Key.enabledCategories
+            )
+        }
         enabledCategories = resolvedCategories.isEmpty ? Self.defaultEnabledCategories : resolvedCategories
         statusBarOrder = Self.resolveStatusBarOrder(
             from: userDefaults.array(forKey: Key.statusBarOrder) as? [String] ?? []
@@ -137,7 +150,7 @@ final class PulseSettings: ObservableObject {
     }
 
     var statusBarCategories: [SystemSnapshot.DetailCategory] {
-        statusBarOrder.filter { enabledCategories.contains($0) }
+        statusBarOrder.filter { enabledCategories.contains($0) && $0.supportsStatusBar }
     }
 
     var launchesAtLogin: Bool {
@@ -298,7 +311,9 @@ final class PulseSettings: ObservableObject {
     }
 
     private static func resolveStatusBarOrder(from rawValues: [String]) -> [SystemSnapshot.DetailCategory] {
-        var resolved = rawValues.compactMap(SystemSnapshot.DetailCategory.init(rawValue:))
+        var resolved = rawValues
+            .compactMap(SystemSnapshot.DetailCategory.init(rawValue:))
+            .filter(\.supportsStatusBar)
         for category in defaultStatusBarOrder where !resolved.contains(category) {
             resolved.append(category)
         }

@@ -41,15 +41,9 @@ struct DashboardView: View {
             Divider()
 
             HStack {
-                if let battery = snapshot.battery {
-                    Label("电池 \(battery.summary)", systemImage: battery.icon)
-                        .font(.system(size: 10.5, weight: .medium, design: .rounded))
-                        .foregroundStyle(.secondary)
-                } else {
-                    Label("菜单栏监控", systemImage: "waveform.path.ecg")
-                        .font(.system(size: 10.5, weight: .medium, design: .rounded))
-                        .foregroundStyle(.secondary)
-                }
+                Label("系统资源监控", systemImage: "waveform.path.ecg")
+                    .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
 
                 Spacer()
 
@@ -162,6 +156,8 @@ private struct CategoryContentView: View {
                 MemoryCategoryView(snapshot: snapshot)
             case .disk:
                 DiskCategoryView(snapshot: snapshot)
+            case .battery:
+                BatteryCategoryView(snapshot: snapshot)
             case .network:
                 NetworkCategoryView(snapshot: snapshot)
             }
@@ -183,7 +179,7 @@ private struct SettingsCategoryView: View {
                         ForEach(Array(PulseSettings.orderedCategories.enumerated()), id: \.element) { index, category in
                             ToggleSettingRow(
                                 title: category.title,
-                                subtitle: "状态栏和详情页同时显示",
+                                subtitle: category.supportsStatusBar ? "状态栏和详情页同时显示" : "仅在详情页显示",
                                 isOn: settings.isEnabled(category),
                                 isToggleEnabled: !settings.isLastEnabledCategory(category),
                                 disabledSubtitle: "当前仅剩这一项已启用",
@@ -193,7 +189,7 @@ private struct SettingsCategoryView: View {
                             }
                         }
 
-                        Text("至少保留 1 个指标。关闭后会同步从状态栏和详情标签里移除。")
+                        Text("至少保留 1 个指标。关闭后会从详情标签移除，支持菜单栏的指标也会同步隐藏。")
                             .font(.system(size: 9.5, weight: .medium, design: .rounded))
                             .foregroundStyle(.secondary)
                             .padding(.top, 4)
@@ -663,6 +659,7 @@ private struct CPUCategoryView: View {
                 headline: snapshot.cpu.summary,
                 trailing: snapshot.cpu.detail,
                 accent: Palette.blue,
+                symbolName: "cpu",
                 headlineColor: Palette.alertTextColor(for: snapshot.cpu.alertLevel)
             ) {
                 VStack(spacing: 10) {
@@ -696,6 +693,7 @@ private struct MemoryCategoryView: View {
                 headline: snapshot.memory.summary,
                 trailing: snapshot.memory.detail,
                 accent: Palette.green,
+                symbolName: "memorychip",
                 headlineColor: Palette.alertTextColor(for: snapshot.memory.alertLevel)
             ) {
                 VStack(spacing: 10) {
@@ -736,7 +734,8 @@ private struct DiskCategoryView: View {
 
     var body: some View {
         let overviewRows = snapshot.detailPanels.disk.sections[safe: 0]?.rows ?? []
-        let volumeRows = snapshot.detailPanels.disk.sections[safe: 1]?.rows ?? []
+        let activityRows = snapshot.detailPanels.disk.sections[safe: 1]?.rows ?? []
+        let volumeRows = snapshot.detailPanels.disk.sections[safe: 2]?.rows ?? []
 
         VStack(alignment: .leading, spacing: 10) {
             HeroCard(
@@ -744,6 +743,7 @@ private struct DiskCategoryView: View {
                 headline: snapshot.disk.summary,
                 trailing: snapshot.disk.detail,
                 accent: Palette.blue,
+                symbolName: "internaldrive",
                 headlineColor: Palette.alertTextColor(for: snapshot.disk.alertLevel)
             ) {
                 HStack(spacing: 10) {
@@ -761,6 +761,25 @@ private struct DiskCategoryView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+
+                HStack(spacing: 8) {
+                    NetworkStatCard(
+                        title: "读取",
+                        value: MetricFormatter.bytesPerSecond(snapshot.diskDetails.readRate),
+                        tint: Palette.blue
+                    )
+                    NetworkStatCard(
+                        title: "写入",
+                        value: MetricFormatter.bytesPerSecond(snapshot.diskDetails.writeRate),
+                        tint: Palette.pink
+                    )
+                }
+
+                DiskHistoryChart(history: snapshot.diskDetails.history)
+            }
+
+            SectionCard(title: "累计") {
+                DetailRowList(rows: Array(activityRows.dropFirst(2)))
             }
 
             SectionCard(title: "卷") {
@@ -770,19 +789,67 @@ private struct DiskCategoryView: View {
     }
 }
 
+private struct BatteryCategoryView: View {
+    let snapshot: SystemSnapshot
+
+    var body: some View {
+        let healthRows = snapshot.detailPanels.battery.sections[safe: 0]?.rows ?? []
+        let powerRows = snapshot.detailPanels.battery.sections[safe: 1]?.rows ?? []
+
+        VStack(alignment: .leading, spacing: 10) {
+            HeroCard(
+                title: "电池",
+                headline: snapshot.battery?.summary ?? "--",
+                trailing: snapshot.battery?.detail ?? "当前设备未检测到内置电池",
+                accent: Palette.green,
+                symbolName: snapshot.battery?.icon
+            ) {
+                HStack {
+                    Spacer(minLength: 0)
+
+                    HStack(spacing: 10) {
+                        RingMetricView(
+                            value: snapshot.battery?.level ?? 0,
+                            label: "电量",
+                            subtitle: snapshot.battery?.summary ?? "--",
+                            tint: Palette.green
+                        )
+                        RingMetricView(
+                            value: snapshot.batteryDetails?.healthRatio ?? 0,
+                            label: "健康",
+                            subtitle: snapshot.batteryDetails?.healthRatio.map(MetricFormatter.percent) ?? "--",
+                            tint: Palette.blue
+                        )
+                    }
+
+                    Spacer(minLength: 0)
+                }
+
+                MetricPillGrid(rows: healthRows)
+            }
+
+            SectionCard(title: "供电") {
+                DetailRowList(rows: powerRows)
+            }
+        }
+    }
+}
+
 private struct NetworkCategoryView: View {
     let snapshot: SystemSnapshot
 
     var body: some View {
-        let addressRows = snapshot.detailPanels.network.sections[safe: 0]?.rows ?? []
-        let interfaceRows = snapshot.detailPanels.network.sections[safe: 1]?.rows ?? []
+        let wifiRows = snapshot.detailPanels.network.sections[safe: 0]?.rows ?? []
+        let addressRows = snapshot.detailPanels.network.sections[safe: 1]?.rows ?? []
+        let interfaceRows = snapshot.detailPanels.network.sections[safe: 2]?.rows ?? []
 
         VStack(alignment: .leading, spacing: 10) {
             HeroCard(
                 title: "网络",
                 headline: snapshot.network.download,
                 trailing: "下载 · 上传 \(snapshot.network.upload)",
-                accent: Palette.pink
+                accent: Palette.pink,
+                symbolName: "network"
             ) {
                 VStack(spacing: 10) {
                     HStack(spacing: 8) {
@@ -800,6 +867,10 @@ private struct NetworkCategoryView: View {
 
                     NetworkHistoryChart(history: snapshot.networkDetails.history)
                 }
+            }
+
+            SectionCard(title: "Wi-Fi") {
+                MetricPillGrid(rows: wifiRows)
             }
 
             if !addressRows.isEmpty {
@@ -820,15 +891,24 @@ private struct HeroCard<Content: View>: View {
     let headline: String
     let trailing: String
     let accent: Color
+    var symbolName: String? = nil
     var headlineColor: Color = .white
     @ViewBuilder let content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
-                Text(title)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(accent)
+                HStack(spacing: 6) {
+                    if let symbolName {
+                        Image(systemName: symbolName)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(accent)
+                    }
+
+                    Text(title)
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(accent)
+                }
 
                 Spacer()
 
@@ -940,6 +1020,39 @@ private struct NetworkHistoryChart: View {
             }
         }
         .frame(height: 72)
+    }
+}
+
+private struct DiskHistoryChart: View {
+    let history: [SystemSnapshot.DiskHistorySample]
+
+    var body: some View {
+        let peak = max(
+            history.map { max($0.readRate, $0.writeRate) }.max() ?? 1,
+            1
+        )
+
+        return GeometryReader { geometry in
+            let mid = geometry.size.height / 2
+            HStack(alignment: .center, spacing: 3) {
+                ForEach(Array(history.enumerated()), id: \.offset) { _, sample in
+                    VStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        Rectangle()
+                            .fill(Palette.pink)
+                            .frame(height: max(1, mid * sample.writeRate / peak))
+                        Rectangle()
+                            .fill(Color.clear)
+                            .frame(height: 2)
+                        Rectangle()
+                            .fill(Palette.blue)
+                            .frame(height: max(1, mid * sample.readRate / peak))
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+        }
+        .frame(height: 60)
     }
 }
 
@@ -1081,6 +1194,25 @@ private struct InlineStatRow: View {
     }
 }
 
+private struct DetailRowList: View {
+    let rows: [SystemSnapshot.DetailRow]
+
+    var body: some View {
+        VStack(spacing: 8) {
+            if rows.isEmpty {
+                Text("暂无数据")
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ForEach(rows) { row in
+                    InlineStatRow(row: row)
+                }
+            }
+        }
+    }
+}
+
 private struct NetworkStatCard: View {
     let title: String
     let value: String
@@ -1091,7 +1223,7 @@ private struct NetworkStatCard: View {
             Text(value)
                 .font(.system(size: 16, weight: .bold, design: .rounded))
                 .monospacedDigit()
-            Label(title, systemImage: title == "上传" ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
+            Label(title, systemImage: symbolName)
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
                 .foregroundStyle(tint)
         }
@@ -1101,6 +1233,13 @@ private struct NetworkStatCard: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color.white.opacity(0.04))
         )
+    }
+
+    private var symbolName: String {
+        if title.contains("上") || title.contains("写") {
+            return "arrow.up.circle.fill"
+        }
+        return "arrow.down.circle.fill"
     }
 }
 
@@ -1162,6 +1301,7 @@ private struct CardBackground: View {
                     .stroke(emphasis ? Color.white.opacity(0.18) : Color.clear, lineWidth: 1)
             )
     }
+
 }
 
 private enum Palette {

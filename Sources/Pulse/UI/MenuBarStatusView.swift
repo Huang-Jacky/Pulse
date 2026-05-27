@@ -39,7 +39,7 @@ struct MenuBarPresentation: Equatable {
 
     func estimatedItemWidth(for category: SystemSnapshot.DetailCategory) -> CGFloat {
         switch category {
-        case .cpu, .memory, .disk:
+        case .cpu, .memory, .disk, .battery:
             switch displayMode {
             case .standard:
                 return 36
@@ -97,6 +97,15 @@ struct MenuBarStatusView: View {
                         normalColor: MenuBarPalette.normal,
                         mode: presentation.displayMode
                     )
+                case .battery:
+                    StatusBarMetricColumn(
+                        title: "BAT",
+                        compactTitle: "B",
+                        value: snapshot.battery?.summary ?? "--",
+                        alertLevel: .normal,
+                        normalColor: MenuBarPalette.normal,
+                        mode: presentation.displayMode
+                    )
                 case .network:
                     NetworkStatusBarColumn(
                         upload: snapshot.network.statusBarUploadLine,
@@ -125,6 +134,8 @@ struct MenuBarStatusView: View {
                 return "内存 \(snapshot.memory.summary)"
             case .disk:
                 return "磁盘 \(snapshot.disk.summary)"
+            case .battery:
+                return "电池 \(snapshot.battery?.summary ?? "--")"
             case .network:
                 return "网络下行 \(snapshot.network.download)，上行 \(snapshot.network.upload)"
             }

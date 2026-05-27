@@ -20,11 +20,16 @@ struct PulseApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings = PulseSettings()
+    private let locationPermissionManager = LocationPermissionManager()
     private var statusBarController: StatusBarController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         let monitor = SystemMonitor(settings: settings)
-        statusBarController = StatusBarController(monitor: monitor, settings: settings)
+        statusBarController = StatusBarController(
+            monitor: monitor,
+            settings: settings,
+            locationPermissionManager: locationPermissionManager
+        )
     }
 }

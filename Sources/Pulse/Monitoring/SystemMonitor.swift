@@ -1,7 +1,10 @@
 @preconcurrency import Darwin
 import AppKit
 import Combine
+import CoreLocation
+import CoreWLAN
 import Foundation
+import IOKit
 import IOKit.ps
 
 @MainActor
@@ -236,8 +239,12 @@ private actor SystemSampler {
     }
 
     private var cpuSampler = CPUSampler()
+    private let diskIOSampler = DiskIOSampler()
+    private let memoryPressureMonitor = MemoryPressureMonitor()
     private var networkSampler = NetworkSampler()
+    private let wifiSampler = WiFiSampler()
     private var cpuHistory: [SystemSnapshot.CPUHistorySample] = []
+    private var diskHistory: [SystemSnapshot.DiskHistorySample] = []
     private var memoryHistory: [Double] = []
     private var networkHistory: [SystemSnapshot.NetworkHistorySample] = []
     private var enabledCategories = PulseSettings.defaultEnabledCategories
@@ -254,6 +261,11 @@ private actor SystemSampler {
             memoryHistory.removeAll()
         }
 
+        if disabledCategories.contains(.disk) {
+            diskHistory.removeAll()
+            diskIOSampler.reset()
+        }
+
         if disabledCategories.contains(.network) {
             networkHistory.removeAll()
             networkSampler.reset()
@@ -266,8 +278,9 @@ private actor SystemSampler {
         let cpuReading = configuration.isEnabled(.cpu) ? readCPU() : .placeholder
         let memoryReading = configuration.isEnabled(.memory) ? readMemory() : .placeholder
         let diskReading = configuration.isEnabled(.disk) ? readDisk() : .placeholder
-        let battery = readBattery()
+        let batteryReading = readBattery()
         let networkReading = configuration.isEnabled(.network) ? readNetwork() : .placeholder
+        let wifiDetails = configuration.isEnabled(.network) ? wifiSampler.sample() : nil
 
         if configuration.isEnabled(.cpu) {
             appendCPUHistory(user: cpuReading.userUsage, system: cpuReading.systemUsage)
@@ -275,6 +288,10 @@ private actor SystemSampler {
 
         if configuration.isEnabled(.memory) {
             appendMemoryHistory(usage: memoryReading.metric.value)
+        }
+
+        if configuration.isEnabled(.disk) {
+            appendDiskHistory(readRate: diskReading.io.readRate, writeRate: diskReading.io.writeRate)
         }
 
         if configuration.isEnabled(.network) {
@@ -290,7 +307,9 @@ private actor SystemSampler {
             cpu: cpuReading,
             memory: memoryReading,
             disk: diskReading,
+            battery: batteryReading,
             network: networkReading,
+            wifiDetails: wifiDetails,
             processes: processes,
             mountedVolumes: mountedVolumes,
             networkAddresses: networkAddresses
@@ -300,7 +319,7 @@ private actor SystemSampler {
             cpu: cpuReading.metric,
             memory: memoryReading.metric,
             disk: diskReading.metric,
-            battery: battery,
+            battery: batteryReading.metric,
             network: networkReading.metric,
             cpuDetails: SystemSnapshot.CPUDetails(
                 userUsage: cpuReading.userUsage,
@@ -324,9 +343,20 @@ private actor SystemSampler {
                 swapTotal: memoryReading.swapTotal,
                 pageInCount: memoryReading.pageInCount,
                 pageOutCount: memoryReading.pageOutCount,
+                pressureLevel: memoryReading.pressureLevel,
+                pressureSummary: MetricFormatter.memoryPressureSummary(for: memoryReading.pressureLevel),
                 history: memoryHistory
             ),
+            diskDetails: SystemSnapshot.DiskDetails(
+                readRate: diskReading.io.readRate,
+                writeRate: diskReading.io.writeRate,
+                totalRead: diskReading.io.totalRead,
+                totalWrite: diskReading.io.totalWrite,
+                history: diskHistory
+            ),
+            batteryDetails: batteryReading.details,
             networkDetails: SystemSnapshot.NetworkDetails(
+                wifi: wifiDetails,
                 addresses: networkAddresses,
                 history: networkHistory
             ),
@@ -394,6 +424,12 @@ private actor SystemSampler {
         let used = active + wired + compressed
         let ratio = totalMemory > 0 ? Double(used) / Double(totalMemory) : 0
         let swapUsage = readSwapUsage()
+        let pressureLevel = resolveMemoryPressureLevel(
+            usedRatio: ratio,
+            compressed: compressed,
+            totalMemory: totalMemory,
+            swapUsed: swapUsage.used
+        )
 
         return MemoryReading(
             metric: .init(
@@ -415,7 +451,8 @@ private actor SystemSampler {
             swapUsed: swapUsage.used,
             swapTotal: swapUsage.total,
             pageInCount: UInt64(stats.pageins),
-            pageOutCount: UInt64(stats.pageouts)
+            pageOutCount: UInt64(stats.pageouts),
+            pressureLevel: pressureLevel
         )
     }
 
@@ -461,7 +498,8 @@ private actor SystemSampler {
                 ),
                 total: total,
                 used: used,
-                available: available
+                available: available,
+                io: diskIOSampler.sample()
             )
         } catch {
             return .failure(
@@ -478,14 +516,14 @@ private actor SystemSampler {
         }
     }
 
-    private func readBattery() -> SystemSnapshot.BatteryMetric? {
+    private func readBattery() -> BatteryReading {
         let powerSourceInfo = IOPSCopyPowerSourcesInfo().takeRetainedValue()
         let powerSources = IOPSCopyPowerSourcesList(powerSourceInfo).takeRetainedValue() as Array
 
         guard let powerSource = powerSources.first,
               let description = IOPSGetPowerSourceDescription(powerSourceInfo, powerSource)?.takeUnretainedValue() as? [String: Any]
         else {
-            return nil
+            return .unavailable
         }
 
         let current = description[kIOPSCurrentCapacityKey] as? Int ?? 0
@@ -500,18 +538,30 @@ private actor SystemSampler {
 
         let detail: String
         if isCharging {
-            detail = "充电中 · \(MetricFormatter.timeRemaining(minutes: timeToFull)) 到充满"
+            if timeToFull >= 0 {
+                detail = "充电中 · \(MetricFormatter.timeRemaining(minutes: timeToFull)) 到充满"
+            } else {
+                detail = "充电中"
+            }
         } else if state == kIOPSBatteryPowerValue {
-            detail = "电池供电 · \(MetricFormatter.timeRemaining(minutes: timeToEmpty)) 剩余"
+            if timeToEmpty >= 0 {
+                detail = "电池供电 · \(MetricFormatter.timeRemaining(minutes: timeToEmpty)) 剩余"
+            } else {
+                detail = "电池供电"
+            }
         } else {
             detail = "接通电源"
         }
 
-        return .init(
-            level: level,
-            summary: MetricFormatter.percent(level),
-            detail: detail,
-            icon: batteryIconName(level: level, isCharging: isCharging, isFullyCharged: isFullyCharged)
+        let registry = readBatteryRegistryDetails()
+        return BatteryReading(
+            metric: .init(
+                level: level,
+                summary: MetricFormatter.percent(level),
+                detail: detail,
+                icon: batteryIconName(level: level, isCharging: isCharging, isFullyCharged: isFullyCharged)
+            ),
+            details: registry
         )
     }
 
@@ -538,6 +588,45 @@ private actor SystemSampler {
         }
 
         return isCharging ? "bolt.fill" : "battery.100percent"
+    }
+
+    private func readBatteryRegistryDetails() -> SystemSnapshot.BatteryDetails? {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
+        guard service != 0 else {
+            return nil
+        }
+
+        defer {
+            IOObjectRelease(service)
+        }
+
+        guard let properties = registryProperties(for: service) else {
+            return nil
+        }
+
+        let cycleCount = registryIntegerValue(forKey: "CycleCount", in: properties)
+        let designCapacity = registryUInt64Value(forKey: "DesignCapacity", in: properties)
+        let fullChargeCapacity = registryUInt64Value(forKey: "NominalChargeCapacity", in: properties)
+        let adapterPowerWatts = registryNestedIntegerValue(path: ["AdapterDetails", "Watts"], in: properties)
+        let temperatureRaw = registryIntegerValue(forKey: "Temperature", in: properties)
+        let healthRatio: Double?
+
+        if let fullChargeCapacity, let designCapacity, designCapacity > 0 {
+            healthRatio = Double(fullChargeCapacity) / Double(designCapacity)
+        } else {
+            healthRatio = nil
+        }
+
+        let temperatureCelsius = temperatureRaw.map { Double($0) / 100.0 }
+
+        return .init(
+            healthRatio: healthRatio,
+            cycleCount: cycleCount,
+            designCapacity: designCapacity,
+            fullChargeCapacity: fullChargeCapacity,
+            temperatureCelsius: temperatureCelsius,
+            adapterPowerWatts: adapterPowerWatts
+        )
     }
 
     private func readNetwork() -> NetworkReading {
@@ -571,6 +660,13 @@ private actor SystemSampler {
         }
     }
 
+    private func appendDiskHistory(readRate: Double, writeRate: Double) {
+        diskHistory.append(.init(readRate: readRate, writeRate: writeRate))
+        if diskHistory.count > SamplingInterval.historyLimit {
+            diskHistory.removeFirst(diskHistory.count - SamplingInterval.historyLimit)
+        }
+    }
+
     private func appendNetworkHistory(download: Double, upload: Double) {
         networkHistory.append(.init(downloadRate: download, uploadRate: upload))
         if networkHistory.count > SamplingInterval.historyLimit {
@@ -599,6 +695,26 @@ private actor SystemSampler {
         }
 
         return (swap.xsu_used, swap.xsu_total)
+    }
+
+    private func resolveMemoryPressureLevel(
+        usedRatio: Double,
+        compressed: UInt64,
+        totalMemory: UInt64,
+        swapUsed: UInt64
+    ) -> SystemSnapshot.MetricAlertLevel {
+        let systemLevel = memoryPressureMonitor.currentLevel()
+        let compressedRatio = totalMemory > 0 ? Double(compressed) / Double(totalMemory) : 0
+
+        if systemLevel == .critical || usedRatio >= 0.92 || swapUsed >= 4 * 1024 * 1024 * 1024 || compressedRatio >= 0.18 {
+            return .critical
+        }
+
+        if systemLevel == .warning || usedRatio >= 0.82 || swapUsed >= 1 * 1024 * 1024 * 1024 || compressedRatio >= 0.08 {
+            return .warning
+        }
+
+        return .normal
     }
 
     private func readNetworkAddresses() -> [SystemSnapshot.NetworkAddress] {
@@ -739,7 +855,9 @@ private actor SystemSampler {
         cpu: CPUReading,
         memory: MemoryReading,
         disk: DiskReading,
+        battery: BatteryReading,
         network: NetworkReading,
+        wifiDetails: SystemSnapshot.WiFiDetails?,
         processes: [ProcessSnapshot],
         mountedVolumes: [MountedVolume],
         networkAddresses: [SystemSnapshot.NetworkAddress]
@@ -793,6 +911,7 @@ private actor SystemSampler {
                     .init(
                         title: "虚拟内存",
                         rows: [
+                            .init(label: "压力", value: MetricFormatter.memoryPressureSummary(for: memory.pressureLevel), secondary: nil),
                             .init(label: "交换已用", value: MetricFormatter.bytes(memory.swapUsed), secondary: memory.swapTotal > 0 ? "总计 \(MetricFormatter.bytes(memory.swapTotal))" : nil),
                             .init(label: "写入分页", value: MetricFormatter.compactCount(memory.pageOutCount), secondary: nil),
                             .init(label: "读取分页", value: MetricFormatter.compactCount(memory.pageInCount), secondary: nil)
@@ -814,6 +933,13 @@ private actor SystemSampler {
             diskRows = [.init(label: "状态", value: "读取失败", secondary: nil)]
         }
 
+        let diskActivityRows = [
+            SystemSnapshot.DetailRow(label: "读取速率", value: MetricFormatter.bytesPerSecond(disk.io.readRate), secondary: nil),
+            SystemSnapshot.DetailRow(label: "写入速率", value: MetricFormatter.bytesPerSecond(disk.io.writeRate), secondary: nil),
+            SystemSnapshot.DetailRow(label: "累计读取", value: MetricFormatter.diskBytes(disk.io.totalRead), secondary: nil),
+            SystemSnapshot.DetailRow(label: "累计写入", value: MetricFormatter.diskBytes(disk.io.totalWrite), secondary: nil)
+        ]
+
         let volumeRows = mountedVolumes.map {
             SystemSnapshot.DetailRow(
                 label: $0.name,
@@ -825,13 +951,65 @@ private actor SystemSampler {
         let diskPanel = configuration.isEnabled(.disk)
             ? SystemSnapshot.DetailPanel(
                 title: "磁盘",
-                subtitle: "主卷容量和本地卷列表",
+                subtitle: "主卷容量、实时读写和本地卷列表",
                 sections: [
                     .init(title: "概览", rows: diskRows),
+                    .init(title: "活动", rows: diskActivityRows),
                     .init(title: "卷", rows: volumeRows)
                 ]
             )
             : disabledPanel(title: "磁盘")
+
+        let batteryHealthRows: [SystemSnapshot.DetailRow]
+        if let details = battery.details {
+            batteryHealthRows = [
+                .init(
+                    label: "健康",
+                    value: details.healthRatio.map(MetricFormatter.percent) ?? "--",
+                    secondary: details.fullChargeCapacity.flatMap { fullChargeCapacity in
+                        details.designCapacity.map { "满充 \(MetricFormatter.milliampHours(fullChargeCapacity)) / 设计 \(MetricFormatter.milliampHours($0))" }
+                    }
+                ),
+                .init(label: "循环次数", value: details.cycleCount.map(String.init) ?? "--", secondary: nil),
+                .init(label: "充电器", value: details.adapterPowerWatts.map { "\($0) W" } ?? "--", secondary: nil),
+                .init(label: "温度", value: details.temperatureCelsius.map(MetricFormatter.temperature) ?? "--", secondary: nil)
+            ]
+        } else {
+            batteryHealthRows = [.init(label: "状态", value: "暂无健康数据", secondary: nil)]
+        }
+
+        let batteryPowerRows: [SystemSnapshot.DetailRow]
+        if let metric = battery.metric {
+            batteryPowerRows = [
+                .init(label: "当前电量", value: metric.summary, secondary: nil),
+                .init(label: "供电状态", value: metric.detail, secondary: nil)
+            ]
+        } else {
+            batteryPowerRows = [.init(label: "状态", value: "当前设备未检测到内置电池", secondary: nil)]
+        }
+
+        let batteryPanel = configuration.isEnabled(.battery)
+            ? SystemSnapshot.DetailPanel(
+                title: "电池",
+                subtitle: "电池健康、循环次数和供电状态",
+                sections: [
+                    .init(title: "健康", rows: batteryHealthRows),
+                    .init(title: "供电", rows: batteryPowerRows)
+                ]
+            )
+            : disabledPanel(title: "电池")
+
+        let wifiRows: [SystemSnapshot.DetailRow]
+        if let wifiDetails {
+            wifiRows = [
+                .init(label: "状态", value: wifiDetails.status, secondary: wifiDetails.detail),
+                .init(label: "网络", value: wifiDetails.networkName ?? "--", secondary: wifiDetails.authorizationNote ?? wifiDetails.interfaceName),
+                .init(label: "信号", value: wifiDetails.quality.map(MetricFormatter.percent) ?? "--", secondary: wifiDetails.rssi.map { "\($0) dBm" }),
+                .init(label: "链路", value: wifiDetails.transmitRateMbps.map(MetricFormatter.megabitsPerSecond) ?? "--", secondary: wifiDetails.channel)
+            ]
+        } else {
+            wifiRows = [.init(label: "状态", value: "未检测到 Wi‑Fi 接口", secondary: nil)]
+        }
 
         let addressRows = networkAddresses.map {
             SystemSnapshot.DetailRow(
@@ -855,8 +1033,9 @@ private actor SystemSampler {
         let networkPanel = configuration.isEnabled(.network)
             ? SystemSnapshot.DetailPanel(
                 title: "网络",
-                subtitle: "地址、实时吞吐和接口列表",
+                subtitle: "Wi‑Fi 状态、地址、实时吞吐和接口列表",
                 sections: [
+                    .init(title: "Wi‑Fi", rows: wifiRows),
                     .init(title: "地址", rows: addressRows),
                     .init(title: "接口", rows: Array(interfaceRows))
                 ]
@@ -867,6 +1046,7 @@ private actor SystemSampler {
             cpu: cpuPanel,
             memory: memoryPanel,
             disk: diskPanel,
+            battery: batteryPanel,
             network: networkPanel
         )
     }
@@ -915,6 +1095,7 @@ private struct MemoryReading {
     let swapTotal: UInt64
     let pageInCount: UInt64
     let pageOutCount: UInt64
+    let pressureLevel: SystemSnapshot.MetricAlertLevel
 
     static let placeholder = MemoryReading.failure(metric: SystemSnapshot.placeholder.memory)
 
@@ -931,27 +1112,46 @@ private struct MemoryReading {
             swapUsed: 0,
             swapTotal: 0,
             pageInCount: 0,
-            pageOutCount: 0
+            pageOutCount: 0,
+            pressureLevel: .normal
         )
     }
 }
 
 private struct DiskReading {
+    struct IOSample {
+        let readRate: Double
+        let writeRate: Double
+        let totalRead: UInt64
+        let totalWrite: UInt64
+
+        static let zero = IOSample(readRate: 0, writeRate: 0, totalRead: 0, totalWrite: 0)
+    }
+
     let metric: SystemSnapshot.GaugeMetric
     let total: UInt64
     let used: UInt64
     let available: UInt64
+    let io: IOSample
 
     static let placeholder = DiskReading(
         metric: SystemSnapshot.placeholder.disk,
         total: 0,
         used: 0,
-        available: 0
+        available: 0,
+        io: .zero
     )
 
     static func failure(metric: SystemSnapshot.GaugeMetric) -> DiskReading {
-        DiskReading(metric: metric, total: 0, used: 0, available: 0)
+        DiskReading(metric: metric, total: 0, used: 0, available: 0, io: .zero)
     }
+}
+
+private struct BatteryReading {
+    let metric: SystemSnapshot.BatteryMetric?
+    let details: SystemSnapshot.BatteryDetails?
+
+    static let unavailable = BatteryReading(metric: nil, details: nil)
 }
 
 private struct NetworkReading {
@@ -1041,6 +1241,299 @@ private struct CommandRunner {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         return String(data: data, encoding: .utf8)
     }
+}
+
+private final class MemoryPressureMonitor {
+    private let lock = NSLock()
+    private var level: SystemSnapshot.MetricAlertLevel = .normal
+    private let source: DispatchSourceMemoryPressure
+
+    init() {
+        let queue = DispatchQueue(label: "pulse.memory-pressure")
+        source = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.normal, .warning, .critical],
+            queue: queue
+        )
+        source.setEventHandler { [weak self, source] in
+            self?.update(with: source.data)
+        }
+        source.resume()
+    }
+
+    func currentLevel() -> SystemSnapshot.MetricAlertLevel {
+        lock.lock()
+        defer { lock.unlock() }
+        return level
+    }
+
+    private func update(with event: DispatchSource.MemoryPressureEvent) {
+        let newLevel: SystemSnapshot.MetricAlertLevel
+        if event.contains(.critical) {
+            newLevel = .critical
+        } else if event.contains(.warning) {
+            newLevel = .warning
+        } else {
+            newLevel = .normal
+        }
+
+        lock.lock()
+        level = newLevel
+        lock.unlock()
+    }
+}
+
+private final class DiskIOSampler {
+    private struct Sample {
+        let readBytes: UInt64
+        let writeBytes: UInt64
+        let timestamp: Date
+    }
+
+    private var previousSample: Sample?
+
+    func reset() {
+        previousSample = nil
+    }
+
+    func sample() -> DiskReading.IOSample {
+        let totals = currentTotals()
+        let current = Sample(readBytes: totals.readBytes, writeBytes: totals.writeBytes, timestamp: Date())
+
+        defer {
+            previousSample = current
+        }
+
+        guard let previousSample else {
+            return .init(readRate: 0, writeRate: 0, totalRead: current.readBytes, totalWrite: current.writeBytes)
+        }
+
+        let timeDelta = current.timestamp.timeIntervalSince(previousSample.timestamp)
+        guard timeDelta > 0 else {
+            return .init(readRate: 0, writeRate: 0, totalRead: current.readBytes, totalWrite: current.writeBytes)
+        }
+
+        let readDelta = current.readBytes >= previousSample.readBytes ? current.readBytes - previousSample.readBytes : 0
+        let writeDelta = current.writeBytes >= previousSample.writeBytes ? current.writeBytes - previousSample.writeBytes : 0
+
+        return .init(
+            readRate: Double(readDelta) / timeDelta,
+            writeRate: Double(writeDelta) / timeDelta,
+            totalRead: current.readBytes,
+            totalWrite: current.writeBytes
+        )
+    }
+
+    private func currentTotals() -> (readBytes: UInt64, writeBytes: UInt64) {
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOBlockStorageDriver"), &iterator) == KERN_SUCCESS else {
+            return (0, 0)
+        }
+
+        defer {
+            IOObjectRelease(iterator)
+        }
+
+        var totalRead: UInt64 = 0
+        var totalWrite: UInt64 = 0
+
+        while case let service = IOIteratorNext(iterator), service != 0 {
+            defer {
+                IOObjectRelease(service)
+            }
+
+            guard let properties = registryProperties(for: service),
+                  let statistics = properties["Statistics"] as? [String: Any]
+            else {
+                continue
+            }
+
+            totalRead += registryUInt64Value(forKey: "Bytes (Read)", in: statistics) ?? 0
+            totalWrite += registryUInt64Value(forKey: "Bytes (Write)", in: statistics) ?? 0
+        }
+
+        return (totalRead, totalWrite)
+    }
+}
+
+private final class WiFiSampler {
+    func sample() -> SystemSnapshot.WiFiDetails? {
+        let client = CWWiFiClient.shared()
+        guard let interface = client.interface() else {
+            return nil
+        }
+
+        let authorizationStatus = CLLocationManager().authorizationStatus
+        let interfaceName = interface.interfaceName ?? "Wi‑Fi"
+        let isPowerOn = interface.powerOn()
+        let networkName = interface.ssid()
+        let transmitRate = Int(interface.transmitRate().rounded())
+        let rssi = interface.rssiValue()
+        let noise = interface.noiseMeasurement()
+        let quality = signalQuality(forRSSI: rssi)
+        let channelObject = interface.wlanChannel()
+        let channel = channelObject.map(channelDescription)
+        let phyMode = interface.activePHYMode()
+        let standard = phyModeDescription(phyMode)
+        let hasActiveLink = transmitRate > 0 || channelObject != nil || phyMode != .modeNone
+        let authorizationNote = locationAuthorizationNote(for: authorizationStatus, hasNetworkName: networkName != nil)
+
+        let status: String
+        let detail: String
+
+        if !isPowerOn {
+            status = "已关闭"
+            detail = "Wi‑Fi 已关闭"
+        } else if hasActiveLink {
+            status = "已连接"
+            let pieces = [
+                networkName,
+                standard,
+                channel,
+                transmitRate > 0 ? MetricFormatter.megabitsPerSecond(transmitRate) : nil,
+                authorizationNote
+            ]
+                .compactMap { $0 }
+            detail = pieces.isEmpty ? interfaceName : pieces.joined(separator: " · ")
+        } else {
+            status = "未连接"
+            detail = authorizationNote ?? "\(interfaceName) 当前没有连接到无线网络"
+        }
+
+        return .init(
+            status: status,
+            detail: detail,
+            interfaceName: interfaceName,
+            networkName: networkName,
+            authorizationNote: authorizationNote,
+            standard: standard,
+            channel: channel,
+            transmitRateMbps: transmitRate > 0 ? transmitRate : nil,
+            rssi: rssi < 0 ? rssi : nil,
+            noise: noise < 0 ? noise : nil,
+            quality: quality
+        )
+    }
+
+    private func signalQuality(forRSSI rssi: Int) -> Double? {
+        guard rssi < 0 else {
+            return nil
+        }
+
+        let normalized = (Double(rssi) + 90) / 50
+        return max(0, min(1, normalized))
+    }
+
+    private func phyModeDescription(_ mode: CWPHYMode) -> String? {
+        switch mode {
+        case .modeNone:
+            return nil
+        case .mode11a:
+            return "802.11a"
+        case .mode11b:
+            return "802.11b"
+        case .mode11g:
+            return "802.11g"
+        case .mode11n:
+            return "802.11n"
+        case .mode11ac:
+            return "802.11ac"
+        case .mode11ax:
+            return "802.11ax"
+        @unknown default:
+            return nil
+        }
+    }
+
+    private func channelDescription(_ channel: CWChannel) -> String {
+        let band: String
+        switch channel.channelBand {
+        case .band2GHz:
+            band = "2.4 GHz"
+        case .band5GHz:
+            band = "5 GHz"
+        case .band6GHz:
+            band = "6 GHz"
+        case .bandUnknown:
+            band = "Wi‑Fi"
+        @unknown default:
+            band = "Wi‑Fi"
+        }
+
+        return "CH \(channel.channelNumber) · \(band)"
+    }
+
+    private func locationAuthorizationNote(for status: CLAuthorizationStatus, hasNetworkName: Bool) -> String? {
+        guard !hasNetworkName else {
+            return nil
+        }
+
+        switch status {
+        case .notDetermined:
+            return "等待位置权限后读取网络名称"
+        case .denied, .restricted:
+            return "未授权读取网络名称"
+        case .authorizedAlways, .authorizedWhenInUse:
+            return "未读取到网络名称"
+        @unknown default:
+            return "未读取到网络名称"
+        }
+    }
+}
+
+private func registryProperties(for service: io_registry_entry_t) -> [String: Any]? {
+    var properties: Unmanaged<CFMutableDictionary>?
+    let result = IORegistryEntryCreateCFProperties(service, &properties, kCFAllocatorDefault, 0)
+    guard result == KERN_SUCCESS,
+          let dictionary = properties?.takeRetainedValue() as? [String: Any]
+    else {
+        return nil
+    }
+
+    return dictionary
+}
+
+private func registryIntegerValue(forKey key: String, in dictionary: [String: Any]) -> Int? {
+    if let number = dictionary[key] as? NSNumber {
+        return number.intValue
+    }
+
+    if let value = dictionary[key] as? Int {
+        return value
+    }
+
+    return nil
+}
+
+private func registryUInt64Value(forKey key: String, in dictionary: [String: Any]) -> UInt64? {
+    if let number = dictionary[key] as? NSNumber {
+        return number.uint64Value
+    }
+
+    if let value = dictionary[key] as? UInt64 {
+        return value
+    }
+
+    if let value = dictionary[key] as? Int {
+        return value >= 0 ? UInt64(value) : nil
+    }
+
+    return nil
+}
+
+private func registryNestedIntegerValue(path: [String], in dictionary: [String: Any]) -> Int? {
+    guard let key = path.first else {
+        return nil
+    }
+
+    if path.count == 1 {
+        return registryIntegerValue(forKey: key, in: dictionary)
+    }
+
+    guard let nested = dictionary[key] as? [String: Any] else {
+        return nil
+    }
+
+    return registryNestedIntegerValue(path: Array(path.dropFirst()), in: nested)
 }
 
 private struct CPUSampler {

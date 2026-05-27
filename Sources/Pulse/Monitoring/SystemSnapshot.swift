@@ -11,6 +11,7 @@ struct SystemSnapshot: Sendable {
         case cpu
         case memory
         case disk
+        case battery
         case network
 
         var id: String { rawValue }
@@ -23,8 +24,19 @@ struct SystemSnapshot: Sendable {
                 return "内存"
             case .disk:
                 return "磁盘"
+            case .battery:
+                return "电池"
             case .network:
                 return "网络"
+            }
+        }
+
+        var supportsStatusBar: Bool {
+            switch self {
+            case .battery:
+                return false
+            case .cpu, .memory, .disk, .network:
+                return true
             }
         }
     }
@@ -85,7 +97,22 @@ struct SystemSnapshot: Sendable {
         let swapTotal: UInt64
         let pageInCount: UInt64
         let pageOutCount: UInt64
+        let pressureLevel: MetricAlertLevel
+        let pressureSummary: String
         let history: [Double]
+    }
+
+    struct DiskHistorySample: Sendable {
+        let readRate: Double
+        let writeRate: Double
+    }
+
+    struct DiskDetails: Sendable {
+        let readRate: Double
+        let writeRate: Double
+        let totalRead: UInt64
+        let totalWrite: UInt64
+        let history: [DiskHistorySample]
     }
 
     struct NetworkAddress: Identifiable, Sendable {
@@ -101,8 +128,32 @@ struct SystemSnapshot: Sendable {
     }
 
     struct NetworkDetails: Sendable {
+        let wifi: WiFiDetails?
         let addresses: [NetworkAddress]
         let history: [NetworkHistorySample]
+    }
+
+    struct WiFiDetails: Sendable {
+        let status: String
+        let detail: String
+        let interfaceName: String
+        let networkName: String?
+        let authorizationNote: String?
+        let standard: String?
+        let channel: String?
+        let transmitRateMbps: Int?
+        let rssi: Int?
+        let noise: Int?
+        let quality: Double?
+    }
+
+    struct BatteryDetails: Sendable {
+        let healthRatio: Double?
+        let cycleCount: Int?
+        let designCapacity: UInt64?
+        let fullChargeCapacity: UInt64?
+        let temperatureCelsius: Double?
+        let adapterPowerWatts: Int?
     }
 
     struct DetailRow: Identifiable, Sendable {
@@ -128,6 +179,7 @@ struct SystemSnapshot: Sendable {
         let cpu: DetailPanel
         let memory: DetailPanel
         let disk: DetailPanel
+        let battery: DetailPanel
         let network: DetailPanel
 
         func panel(for category: DetailCategory) -> DetailPanel {
@@ -138,6 +190,8 @@ struct SystemSnapshot: Sendable {
                 return memory
             case .disk:
                 return disk
+            case .battery:
+                return battery
             case .network:
                 return network
             }
@@ -151,6 +205,8 @@ struct SystemSnapshot: Sendable {
     let network: NetworkMetric
     let cpuDetails: CPUDetails
     let memoryDetails: MemoryDetails
+    let diskDetails: DiskDetails
+    let batteryDetails: BatteryDetails?
     let networkDetails: NetworkDetails
     let detailPanels: DetailPanels
 
@@ -218,9 +274,20 @@ struct SystemSnapshot: Sendable {
             swapTotal: 0,
             pageInCount: 0,
             pageOutCount: 0,
+            pressureLevel: .normal,
+            pressureSummary: "正常",
             history: []
         ),
+        diskDetails: DiskDetails(
+            readRate: 0,
+            writeRate: 0,
+            totalRead: 0,
+            totalWrite: 0,
+            history: []
+        ),
+        batteryDetails: nil,
         networkDetails: NetworkDetails(
+            wifi: nil,
             addresses: [],
             history: []
         ),
@@ -237,6 +304,11 @@ struct SystemSnapshot: Sendable {
             ),
             disk: DetailPanel(
                 title: "磁盘 详细数据",
+                subtitle: "等待采样",
+                sections: []
+            ),
+            battery: DetailPanel(
+                title: "电池 详细数据",
                 subtitle: "等待采样",
                 sections: []
             ),
@@ -267,6 +339,8 @@ enum MetricFormatter {
             if value >= 0.9 {
                 return .warning
             }
+            return .normal
+        case .battery:
             return .normal
         case .network:
             return .normal
@@ -398,5 +472,28 @@ enum MetricFormatter {
         }
 
         return "\(value)"
+    }
+
+    static func temperature(_ celsius: Double) -> String {
+        String(format: "%.1f°C", celsius)
+    }
+
+    static func megabitsPerSecond(_ value: Int) -> String {
+        "\(value) Mbps"
+    }
+
+    static func milliampHours(_ value: UInt64) -> String {
+        "\(value) mAh"
+    }
+
+    static func memoryPressureSummary(for level: SystemSnapshot.MetricAlertLevel) -> String {
+        switch level {
+        case .normal:
+            return "正常"
+        case .warning:
+            return "偏高"
+        case .critical:
+            return "紧张"
+        }
     }
 }
