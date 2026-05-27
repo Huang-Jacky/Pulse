@@ -23,15 +23,18 @@ final class PulseSettings: ObservableObject {
         static let enabledCategories = "pulse.enabledCategories"
         static let refreshIntervalSeconds = "pulse.refreshIntervalSeconds"
         static let legacyRefreshIntervalMinutes = "pulse.refreshIntervalMinutes"
+        static let adaptiveRefreshEnabled = "pulse.adaptiveRefreshEnabled"
     }
 
     nonisolated static let defaultEnabledCategories = Set(SystemSnapshot.DetailCategory.allCases)
     nonisolated static let orderedCategories = SystemSnapshot.DetailCategory.allCases
     nonisolated static let statusBarOrder: [SystemSnapshot.DetailCategory] = [.network, .disk, .cpu, .memory]
     nonisolated static let defaultRefreshIntervalSeconds = 1
+    nonisolated static let defaultAdaptiveRefreshEnabled = true
 
     @Published private(set) var enabledCategories: Set<SystemSnapshot.DetailCategory>
     @Published private(set) var refreshIntervalSeconds: Int
+    @Published private(set) var adaptiveRefreshEnabled: Bool
     @Published private(set) var launchAtLoginStatus: LaunchAtLoginStatus
     @Published private(set) var launchAtLoginErrorMessage: String?
 
@@ -53,6 +56,12 @@ final class PulseSettings: ObservableObject {
             userDefaults.removeObject(forKey: Key.legacyRefreshIntervalMinutes)
         } else {
             refreshIntervalSeconds = Self.defaultRefreshIntervalSeconds
+        }
+
+        if userDefaults.object(forKey: Key.adaptiveRefreshEnabled) != nil {
+            adaptiveRefreshEnabled = userDefaults.bool(forKey: Key.adaptiveRefreshEnabled)
+        } else {
+            adaptiveRefreshEnabled = Self.defaultAdaptiveRefreshEnabled
         }
 
         launchAtLoginStatus = Self.resolveLaunchAtLoginStatus()
@@ -139,6 +148,15 @@ final class PulseSettings: ObservableObject {
         refreshIntervalSeconds = clamped
         userDefaults.set(clamped, forKey: Key.refreshIntervalSeconds)
         userDefaults.removeObject(forKey: Key.legacyRefreshIntervalMinutes)
+    }
+
+    func setAdaptiveRefreshEnabled(_ isEnabled: Bool) {
+        guard adaptiveRefreshEnabled != isEnabled else {
+            return
+        }
+
+        adaptiveRefreshEnabled = isEnabled
+        userDefaults.set(isEnabled, forKey: Key.adaptiveRefreshEnabled)
     }
 
     func refreshLaunchAtLoginStatus() {

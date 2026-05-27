@@ -29,6 +29,7 @@ struct DashboardView: View {
                 CategoryContentView(
                     snapshot: snapshot,
                     selectedTab: selectedTab,
+                    monitor: monitor,
                     settings: settings
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -147,6 +148,7 @@ private struct DetailCategoryButtonStyle: ButtonStyle {
 private struct CategoryContentView: View {
     let snapshot: SystemSnapshot
     let selectedTab: DashboardTab
+    @ObservedObject var monitor: SystemMonitor
     @ObservedObject var settings: PulseSettings
 
     var body: some View {
@@ -163,12 +165,13 @@ private struct CategoryContentView: View {
                 NetworkCategoryView(snapshot: snapshot)
             }
         case .settings:
-            SettingsCategoryView(settings: settings)
+            SettingsCategoryView(monitor: monitor, settings: settings)
         }
     }
 }
 
 private struct SettingsCategoryView: View {
+    @ObservedObject var monitor: SystemMonitor
     @ObservedObject var settings: PulseSettings
 
     var body: some View {
@@ -251,6 +254,21 @@ private struct SettingsCategoryView: View {
                         .labelsHidden()
                         .pickerStyle(.menu)
                         .frame(width: 108)
+                    }
+                }
+
+                SectionCard(title: "刷新策略") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ToggleSettingRow(
+                            title: "智能节能",
+                            subtitle: "系统处于低电量模式时自动降低采集频率。",
+                            isOn: settings.adaptiveRefreshEnabled,
+                            isToggleEnabled: true,
+                            disabledSubtitle: nil,
+                            isLast: true
+                        ) { isEnabled in
+                            settings.setAdaptiveRefreshEnabled(isEnabled)
+                        }
                     }
                 }
             }

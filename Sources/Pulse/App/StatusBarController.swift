@@ -50,6 +50,7 @@ final class StatusBarController: NSObject {
     private func configurePopover() {
         popover.behavior = .transient
         popover.animates = true
+        popover.delegate = self
         popover.contentSize = NSSize(width: 404, height: 520)
         popover.contentViewController = NSHostingController(rootView: DashboardView(monitor: monitor, settings: settings))
     }
@@ -87,7 +88,14 @@ final class StatusBarController: NSObject {
             popover.performClose(sender)
         } else {
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+            monitor.setDashboardVisible(true)
             popover.contentViewController?.view.window?.becomeKey()
         }
+    }
+}
+
+extension StatusBarController: NSPopoverDelegate {
+    func popoverDidClose(_ notification: Notification) {
+        monitor.setDashboardVisible(false)
     }
 }

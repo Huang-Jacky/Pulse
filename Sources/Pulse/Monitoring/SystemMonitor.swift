@@ -6,16 +6,53 @@ import IOKit.ps
 
 @MainActor
 final class SystemMonitor: ObservableObject {
+    private struct RefreshPolicy: Equatable {
+        enum Mode: Equatable {
+            case base
+            case dashboardActive
+            case batterySaver
+            case lowPowerMode
+
+            var description: String {
+                switch self {
+                case .base:
+                    return "按基础采样间隔运行"
+                case .dashboardActive:
+                    return "面板打开时提升到 1 秒刷新"
+                case .batterySaver:
+                    return "电池供电时自动放慢刷新"
+                case .lowPowerMode:
+                    return "低电量模式下自动放慢刷新"
+                }
+            }
+        }
+
+        let intervalSeconds: Int
+        let mode: Mode
+    }
+
     @Published private(set) var snapshot = SystemSnapshot.placeholder
+    @Published private(set) var effectiveRefreshIntervalSeconds: Int
+    @Published private(set) var refreshPolicyDescription: String
 
     private let settings: PulseSettings
     private var refreshTask: Task<Void, Never>?
     private let sampler = SystemSampler()
     private var settingsCancellables: Set<AnyCancellable> = []
     private var lastRefreshDate: Date?
+    private var isDashboardVisible = false
 
     init(settings: PulseSettings) {
         self.settings = settings
+        let initialPolicy = Self.resolveRefreshPolicy(
+            baseInterval: settings.refreshIntervalSeconds,
+            adaptiveRefreshEnabled: settings.adaptiveRefreshEnabled,
+            isDashboardVisible: false,
+            isOnBatteryPower: false,
+            isLowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled
+        )
+        effectiveRefreshIntervalSeconds = initialPolicy.intervalSeconds
+        refreshPolicyDescription = initialPolicy.mode.description
         bindSettings()
 
         Task {
@@ -27,17 +64,20 @@ final class SystemMonitor: ObservableObject {
     private func startRefreshTask() {
         refreshTask?.cancel()
 
-        let intervalSeconds = settings.refreshIntervalSeconds
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
-                let duration = UInt64(intervalSeconds) * 1_000_000_000
+                guard let self else {
+                    break
+                }
+
+                let duration = self.nextRefreshDuration()
                 try? await Task.sleep(nanoseconds: duration)
 
                 if Task.isCancelled {
                     break
                 }
 
-                await self?.refresh()
+                await self.refresh()
             }
         }
     }
@@ -48,6 +88,21 @@ final class SystemMonitor: ObservableObject {
 
     private func bindSettings() {
         settings.$refreshIntervalSeconds
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                guard let self else {
+                    return
+                }
+
+                self.restartRefreshTask()
+                Task {
+                    await self.refresh(forceStaticRefresh: true)
+                }
+            }
+            .store(in: &settingsCancellables)
+
+        settings.$adaptiveRefreshEnabled
             .dropFirst()
             .removeDuplicates()
             .sink { [weak self] _ in
@@ -78,11 +133,29 @@ final class SystemMonitor: ObservableObject {
             .store(in: &settingsCancellables)
     }
 
+    func setDashboardVisible(_ isVisible: Bool) {
+        guard isDashboardVisible != isVisible else {
+            return
+        }
+
+        isDashboardVisible = isVisible
+        updateRefreshPolicyState()
+        restartRefreshTask()
+
+        if isVisible {
+            Task {
+                await refresh(forceStaticRefresh: true)
+            }
+        }
+    }
+
     private func refresh(forceStaticRefresh: Bool = false) async {
+        let policy = currentRefreshPolicy()
+        updateRefreshPolicyState(policy)
         let now = Date()
         if !forceStaticRefresh,
            let lastRefreshDate,
-           now.timeIntervalSince(lastRefreshDate) + 0.05 < TimeInterval(settings.refreshIntervalSeconds) {
+           now.timeIntervalSince(lastRefreshDate) + 0.05 < TimeInterval(policy.intervalSeconds) {
             return
         }
 
@@ -91,6 +164,69 @@ final class SystemMonitor: ObservableObject {
             configuration: settings.monitorConfiguration,
             forceStaticRefresh: forceStaticRefresh
         )
+        updateRefreshPolicyState()
+    }
+
+    private func nextRefreshDuration() -> UInt64 {
+        let policy = currentRefreshPolicy()
+        updateRefreshPolicyState(policy)
+        return UInt64(policy.intervalSeconds) * 1_000_000_000
+    }
+
+    private func currentRefreshPolicy() -> RefreshPolicy {
+        Self.resolveRefreshPolicy(
+            baseInterval: settings.refreshIntervalSeconds,
+            adaptiveRefreshEnabled: settings.adaptiveRefreshEnabled,
+            isDashboardVisible: isDashboardVisible,
+            isOnBatteryPower: isRunningOnBatteryPower(),
+            isLowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled
+        )
+    }
+
+    private func updateRefreshPolicyState(_ policy: RefreshPolicy? = nil) {
+        let resolvedPolicy = policy ?? currentRefreshPolicy()
+        effectiveRefreshIntervalSeconds = resolvedPolicy.intervalSeconds
+        refreshPolicyDescription = resolvedPolicy.mode.description
+    }
+
+    private func isRunningOnBatteryPower() -> Bool {
+        let powerSourceInfo = IOPSCopyPowerSourcesInfo().takeRetainedValue()
+        let powerSources = IOPSCopyPowerSourcesList(powerSourceInfo).takeRetainedValue() as Array
+
+        guard let powerSource = powerSources.first,
+              let description = IOPSGetPowerSourceDescription(powerSourceInfo, powerSource)?.takeUnretainedValue() as? [String: Any]
+        else {
+            return false
+        }
+
+        let state = description[kIOPSPowerSourceStateKey] as? String ?? ""
+        return state == kIOPSBatteryPowerValue
+    }
+
+    private static func resolveRefreshPolicy(
+        baseInterval: Int,
+        adaptiveRefreshEnabled: Bool,
+        isDashboardVisible: Bool,
+        isOnBatteryPower: Bool,
+        isLowPowerModeEnabled: Bool
+    ) -> RefreshPolicy {
+        guard adaptiveRefreshEnabled else {
+            return RefreshPolicy(intervalSeconds: baseInterval, mode: .base)
+        }
+
+        if isDashboardVisible {
+            return RefreshPolicy(intervalSeconds: 1, mode: .dashboardActive)
+        }
+
+        if isLowPowerModeEnabled {
+            return RefreshPolicy(intervalSeconds: max(baseInterval, 5), mode: .lowPowerMode)
+        }
+
+        if isOnBatteryPower {
+            return RefreshPolicy(intervalSeconds: max(baseInterval, 3), mode: .batterySaver)
+        }
+
+        return RefreshPolicy(intervalSeconds: baseInterval, mode: .base)
     }
 }
 
