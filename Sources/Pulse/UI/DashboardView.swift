@@ -839,9 +839,8 @@ private struct NetworkCategoryView: View {
     let snapshot: SystemSnapshot
 
     var body: some View {
-        let wifiRows = snapshot.detailPanels.network.sections[safe: 0]?.rows ?? []
-        let addressRows = snapshot.detailPanels.network.sections[safe: 1]?.rows ?? []
-        let interfaceRows = snapshot.detailPanels.network.sections[safe: 2]?.rows ?? []
+        let connectionRows = snapshot.detailPanels.network.sections[safe: 0]?.rows ?? []
+        let interfaceRows = snapshot.detailPanels.network.sections[safe: 1]?.rows ?? []
 
         VStack(alignment: .leading, spacing: 10) {
             HeroCard(
@@ -869,17 +868,11 @@ private struct NetworkCategoryView: View {
                 }
             }
 
-            SectionCard(title: "Wi-Fi") {
-                MetricPillGrid(rows: wifiRows)
+            SectionCard(title: "当前连接") {
+                MetricPillGrid(rows: connectionRows)
             }
 
-            if !addressRows.isEmpty {
-                SectionCard(title: "地址") {
-                    ProcessList(rows: addressRows, valueTitle: "地址")
-                }
-            }
-
-            SectionCard(title: "接口") {
+            SectionCard(title: "接口流量") {
                 ProcessList(rows: interfaceRows, valueTitle: "流量")
             }
         }

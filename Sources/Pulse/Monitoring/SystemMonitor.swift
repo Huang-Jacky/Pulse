@@ -6,6 +6,7 @@ import CoreWLAN
 import Foundation
 import IOKit
 import IOKit.ps
+import SystemConfiguration
 
 @MainActor
 final class SystemMonitor: ObservableObject {
@@ -242,6 +243,7 @@ private actor SystemSampler {
     private let diskIOSampler = DiskIOSampler()
     private let memoryPressureMonitor = MemoryPressureMonitor()
     private var networkSampler = NetworkSampler()
+    private let networkEnvironmentSampler = NetworkEnvironmentSampler()
     private let wifiSampler = WiFiSampler()
     private var cpuHistory: [SystemSnapshot.CPUHistorySample] = []
     private var diskHistory: [SystemSnapshot.DiskHistorySample] = []
@@ -281,6 +283,7 @@ private actor SystemSampler {
         let batteryReading = readBattery()
         let networkReading = configuration.isEnabled(.network) ? readNetwork() : .placeholder
         let wifiDetails = configuration.isEnabled(.network) ? wifiSampler.sample() : nil
+        let networkEnvironment = configuration.isEnabled(.network) ? networkEnvironmentSampler.sample() : .empty
 
         if configuration.isEnabled(.cpu) {
             appendCPUHistory(user: cpuReading.userUsage, system: cpuReading.systemUsage)
@@ -310,6 +313,7 @@ private actor SystemSampler {
             battery: batteryReading,
             network: networkReading,
             wifiDetails: wifiDetails,
+            networkEnvironment: networkEnvironment,
             processes: processes,
             mountedVolumes: mountedVolumes,
             networkAddresses: networkAddresses
@@ -858,6 +862,7 @@ private actor SystemSampler {
         battery: BatteryReading,
         network: NetworkReading,
         wifiDetails: SystemSnapshot.WiFiDetails?,
+        networkEnvironment: NetworkEnvironmentReading,
         processes: [ProcessSnapshot],
         mountedVolumes: [MountedVolume],
         networkAddresses: [SystemSnapshot.NetworkAddress]
@@ -999,45 +1004,83 @@ private actor SystemSampler {
             )
             : disabledPanel(title: "电池")
 
-        let wifiRows: [SystemSnapshot.DetailRow]
+        let currentConnectionAddresses = {
+            guard let primaryInterfaceName = networkEnvironment.primaryInterfaceName else {
+                return networkAddresses
+            }
+
+            let primaryAddresses = networkAddresses.filter { $0.interface == primaryInterfaceName }
+            return primaryAddresses.isEmpty ? networkAddresses : primaryAddresses
+        }()
+
+        var currentConnectionRows = [
+            SystemSnapshot.DetailRow(
+                label: "当前连接",
+                value: networkEnvironment.primaryInterfaceDisplayName ?? networkEnvironment.primaryInterfaceTypeName ?? "--",
+                secondary: networkEnvironment.primaryInterfaceSecondary
+            ),
+            SystemSnapshot.DetailRow(
+                label: "VPN",
+                value: networkEnvironment.vpnSummary,
+                secondary: networkEnvironment.vpnDetail
+            ),
+            SystemSnapshot.DetailRow(
+                label: "代理",
+                value: networkEnvironment.proxySummary,
+                secondary: networkEnvironment.proxyDetail
+            )
+        ]
+
         if let wifiDetails {
-            wifiRows = [
-                .init(label: "状态", value: wifiDetails.status, secondary: wifiDetails.detail),
-                .init(label: "网络", value: wifiDetails.networkName ?? "--", secondary: wifiDetails.authorizationNote ?? wifiDetails.interfaceName),
-                .init(label: "信号", value: wifiDetails.quality.map(MetricFormatter.percent) ?? "--", secondary: wifiDetails.rssi.map { "\($0) dBm" }),
-                .init(label: "链路", value: wifiDetails.transmitRateMbps.map(MetricFormatter.megabitsPerSecond) ?? "--", secondary: wifiDetails.channel)
-            ]
-        } else {
-            wifiRows = [.init(label: "状态", value: "未检测到 Wi‑Fi 接口", secondary: nil)]
+            currentConnectionRows.append(contentsOf: [
+                .init(label: "Wi‑Fi 状态", value: wifiDetails.status, secondary: wifiDetails.detail),
+                .init(label: "网络名称", value: wifiDetails.networkName ?? "--", secondary: wifiDetails.authorizationNote ?? wifiDetails.standard ?? networkEnvironment.interfaceSecondaryDescription(for: wifiDetails.interfaceName)),
+                .init(label: "信号强度", value: wifiDetails.quality.map(MetricFormatter.percent) ?? "--", secondary: wifiDetails.rssi.map { "\($0) dBm" }),
+                .init(label: "链路速率", value: wifiDetails.transmitRateMbps.map(MetricFormatter.megabitsPerSecond) ?? "--", secondary: wifiDetails.channel)
+            ])
         }
 
-        let addressRows = networkAddresses.map {
-            SystemSnapshot.DetailRow(
-                label: $0.name,
+        let addressRows: [SystemSnapshot.DetailRow] = currentConnectionAddresses.map {
+            let secondaryParts = [
+                networkEnvironment.interfaceTypeName(for: $0.interface),
+                networkEnvironment.isPrimaryInterface($0.interface) ? "主用接口" : nil,
+                $0.interface
+            ].compactMap { $0 }
+
+            return SystemSnapshot.DetailRow(
+                label: "\($0.name) 地址",
                 value: $0.address,
-                secondary: $0.interface
+                secondary: secondaryParts.isEmpty ? nil : secondaryParts.joined(separator: " · ")
             )
         }
 
-        let interfaceRows = network.interfaces
+        currentConnectionRows.append(contentsOf: addressRows)
+
+        let interfaceRows: [SystemSnapshot.DetailRow] = network.interfaces
             .sorted { ($0.downloadRate + $0.uploadRate) > ($1.downloadRate + $1.uploadRate) }
             .prefix(6)
             .map {
-                SystemSnapshot.DetailRow(
-                    label: $0.name,
+                let secondaryParts = [
+                    networkEnvironment.interfaceTypeName(for: $0.name),
+                    networkEnvironment.isPrimaryInterface($0.name) ? "主用接口" : nil,
+                    networkEnvironment.isVPNInterface($0.name) ? "VPN" : nil,
+                    "↑ \(MetricFormatter.bytesPerSecond($0.uploadRate))"
+                ].compactMap { $0 }
+
+                return SystemSnapshot.DetailRow(
+                    label: networkEnvironment.interfaceDisplayName(for: $0.name) ?? $0.name,
                     value: "↓ \(MetricFormatter.bytesPerSecond($0.downloadRate))",
-                    secondary: "↑ \(MetricFormatter.bytesPerSecond($0.uploadRate))"
+                    secondary: secondaryParts.joined(separator: " · ")
                 )
             }
 
         let networkPanel = configuration.isEnabled(.network)
             ? SystemSnapshot.DetailPanel(
                 title: "网络",
-                subtitle: "Wi‑Fi 状态、地址、实时吞吐和接口列表",
+                subtitle: "当前连接详情与接口流量",
                 sections: [
-                    .init(title: "Wi‑Fi", rows: wifiRows),
-                    .init(title: "地址", rows: addressRows),
-                    .init(title: "接口", rows: Array(interfaceRows))
+                    .init(title: "当前连接", rows: currentConnectionRows),
+                    .init(title: "接口流量", rows: interfaceRows)
                 ]
             )
             : disabledPanel(title: "网络")
@@ -1152,6 +1195,90 @@ private struct BatteryReading {
     let details: SystemSnapshot.BatteryDetails?
 
     static let unavailable = BatteryReading(metric: nil, details: nil)
+}
+
+private struct NetworkEnvironmentReading {
+    struct InterfaceDescriptor: Sendable {
+        let name: String
+        let displayName: String
+        let typeName: String
+        let isVPN: Bool
+    }
+
+    let primaryInterfaceName: String?
+    let descriptors: [String: InterfaceDescriptor]
+    let activeVPNInterfaces: [String]
+    let proxySummary: String
+    let proxyDetail: String?
+
+    static let empty = NetworkEnvironmentReading(
+        primaryInterfaceName: nil,
+        descriptors: [:],
+        activeVPNInterfaces: [],
+        proxySummary: "未检测到",
+        proxyDetail: nil
+    )
+
+    var primaryInterfaceDisplayName: String? {
+        guard let primaryInterfaceName else {
+            return nil
+        }
+        return interfaceDisplayName(for: primaryInterfaceName) ?? primaryInterfaceName
+    }
+
+    var primaryInterfaceTypeName: String? {
+        guard let primaryInterfaceName else {
+            return nil
+        }
+        return interfaceTypeName(for: primaryInterfaceName)
+    }
+
+    var primaryInterfaceSecondary: String? {
+        let parts = [
+            primaryInterfaceTypeName,
+            primaryInterfaceName
+        ].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    var vpnSummary: String {
+        activeVPNInterfaces.isEmpty ? "未连接" : "已连接"
+    }
+
+    var vpnDetail: String? {
+        guard !activeVPNInterfaces.isEmpty else {
+            return nil
+        }
+
+        return activeVPNInterfaces
+            .map { interfaceDisplayName(for: $0) ?? $0 }
+            .joined(separator: " · ")
+    }
+
+    func interfaceDisplayName(for name: String) -> String? {
+        descriptors[name]?.displayName
+    }
+
+    func interfaceTypeName(for name: String) -> String? {
+        descriptors[name]?.typeName ?? NetworkEnvironmentSampler.fallbackTypeName(for: name)
+    }
+
+    func interfaceSecondaryDescription(for name: String) -> String? {
+        let parts = [
+            interfaceTypeName(for: name),
+            isPrimaryInterface(name) ? "主用接口" : nil,
+            name
+        ].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    func isPrimaryInterface(_ name: String) -> Bool {
+        primaryInterfaceName == name
+    }
+
+    func isVPNInterface(_ name: String) -> Bool {
+        activeVPNInterfaces.contains(name) || descriptors[name]?.isVPN == true
+    }
 }
 
 private struct NetworkReading {
@@ -1477,6 +1604,215 @@ private final class WiFiSampler {
         @unknown default:
             return "未读取到网络名称"
         }
+    }
+}
+
+private final class NetworkEnvironmentSampler {
+    func sample() -> NetworkEnvironmentReading {
+        let primaryInterfaceName = readPrimaryInterfaceName()
+        let descriptors = readInterfaceDescriptors()
+        let activeInterfaces = readActiveInterfaceNames()
+        let activeVPNInterfaces = activeInterfaces.filter(Self.isVPNInterfaceName).sorted()
+        let proxy = readProxySettings()
+
+        return .init(
+            primaryInterfaceName: primaryInterfaceName,
+            descriptors: descriptors,
+            activeVPNInterfaces: activeVPNInterfaces,
+            proxySummary: proxy.summary,
+            proxyDetail: proxy.detail
+        )
+    }
+
+    static func fallbackTypeName(for interfaceName: String) -> String? {
+        if isVPNInterfaceName(interfaceName) {
+            return "VPN"
+        }
+
+        if interfaceName.hasPrefix("en") {
+            return interfaceName == "en0" ? "Wi‑Fi" : "网络接口"
+        }
+
+        if interfaceName.hasPrefix("bridge") {
+            return "桥接"
+        }
+
+        if interfaceName.hasPrefix("awdl") {
+            return "Apple Wireless Direct Link"
+        }
+
+        if interfaceName.hasPrefix("llw") {
+            return "低功耗 Wi‑Fi"
+        }
+
+        return nil
+    }
+
+    private func readPrimaryInterfaceName() -> String? {
+        let store = SCDynamicStoreCreate(nil, "PulseNetworkEnvironment" as CFString, nil, nil)
+
+        if let store,
+           let globalIPv4 = SCDynamicStoreCopyValue(store, "State:/Network/Global/IPv4" as CFString) as? [String: Any],
+           let primary = globalIPv4[kSCDynamicStorePropNetPrimaryInterface as String] as? String,
+           !primary.isEmpty {
+            return primary
+        }
+
+        if let store,
+           let globalIPv6 = SCDynamicStoreCopyValue(store, "State:/Network/Global/IPv6" as CFString) as? [String: Any],
+           let primary = globalIPv6[kSCDynamicStorePropNetPrimaryInterface as String] as? String,
+           !primary.isEmpty {
+            return primary
+        }
+
+        return nil
+    }
+
+    private func readInterfaceDescriptors() -> [String: NetworkEnvironmentReading.InterfaceDescriptor] {
+        guard let interfaces = SCNetworkInterfaceCopyAll() as? [SCNetworkInterface] else {
+            return [:]
+        }
+
+        var descriptors: [String: NetworkEnvironmentReading.InterfaceDescriptor] = [:]
+
+        for interface in interfaces {
+            guard let bsdName = SCNetworkInterfaceGetBSDName(interface) as String?, !bsdName.isEmpty else {
+                continue
+            }
+
+            let displayName = (SCNetworkInterfaceGetLocalizedDisplayName(interface) as String?) ?? bsdName
+            let type = SCNetworkInterfaceGetInterfaceType(interface) as String?
+            let isVPN = Self.isVPNInterfaceType(type) || Self.isVPNInterfaceName(bsdName)
+            let typeName = type.flatMap(Self.interfaceTypeName(for:)) ?? Self.fallbackTypeName(for: bsdName) ?? "网络接口"
+
+            descriptors[bsdName] = .init(
+                name: bsdName,
+                displayName: displayName,
+                typeName: typeName,
+                isVPN: isVPN
+            )
+        }
+
+        return descriptors
+    }
+
+    private func readActiveInterfaceNames() -> [String] {
+        var pointer: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&pointer) == 0, let firstPointer = pointer else {
+            return []
+        }
+
+        defer {
+            freeifaddrs(pointer)
+        }
+
+        var names = Set<String>()
+
+        for interface in sequence(first: firstPointer, next: { $0.pointee.ifa_next }) {
+            let flags = Int32(interface.pointee.ifa_flags)
+            guard (flags & IFF_UP) == IFF_UP,
+                  (flags & IFF_LOOPBACK) == 0
+            else {
+                continue
+            }
+
+            names.insert(String(cString: interface.pointee.ifa_name))
+        }
+
+        return names.sorted()
+    }
+
+    private func readProxySettings() -> (summary: String, detail: String?) {
+        guard let proxies = SCDynamicStoreCopyProxies(nil) as? [String: Any] else {
+            return ("未检测到", nil)
+        }
+
+        var enabledItems: [String] = []
+
+        if proxyEnabled(kSCPropNetProxiesHTTPEnable, in: proxies) {
+            enabledItems.append(proxyDescription(scheme: "HTTP", hostKey: kSCPropNetProxiesHTTPProxy, portKey: kSCPropNetProxiesHTTPPort, from: proxies))
+        }
+
+        if proxyEnabled(kSCPropNetProxiesHTTPSEnable, in: proxies) {
+            enabledItems.append(proxyDescription(scheme: "HTTPS", hostKey: kSCPropNetProxiesHTTPSProxy, portKey: kSCPropNetProxiesHTTPSPort, from: proxies))
+        }
+
+        if proxyEnabled(kSCPropNetProxiesSOCKSEnable, in: proxies) {
+            enabledItems.append(proxyDescription(scheme: "SOCKS", hostKey: kSCPropNetProxiesSOCKSProxy, portKey: kSCPropNetProxiesSOCKSPort, from: proxies))
+        }
+
+        if proxyEnabled(kSCPropNetProxiesProxyAutoConfigEnable, in: proxies) {
+            enabledItems.append("PAC")
+        }
+
+        if proxyEnabled(kSCPropNetProxiesProxyAutoDiscoveryEnable, in: proxies) {
+            enabledItems.append("自动发现")
+        }
+
+        guard !enabledItems.isEmpty else {
+            return ("未开启", nil)
+        }
+
+        return ("已开启", enabledItems.joined(separator: " · "))
+    }
+
+    private func proxyEnabled(_ key: CFString, in proxies: [String: Any]) -> Bool {
+        ((proxies[key as String] as? NSNumber)?.intValue ?? 0) == 1
+    }
+
+    private func proxyDescription(scheme: String, hostKey: CFString, portKey: CFString, from proxies: [String: Any]) -> String {
+        let host = proxies[hostKey as String] as? String
+        let port = (proxies[portKey as String] as? NSNumber)?.intValue
+
+        if let host, !host.isEmpty, let port, port > 0 {
+            return "\(scheme) \(host):\(port)"
+        }
+
+        if let host, !host.isEmpty {
+            return "\(scheme) \(host)"
+        }
+
+        return scheme
+    }
+
+    private static let knownVPNTypes: Set<String> = [
+        "IPSec",
+        "PPP",
+        "VPN"
+    ]
+
+    private static let interfaceTypeLabels: [String: String] = [
+        "IEEE80211": "Wi‑Fi",
+        "Ethernet": "有线网络",
+        "Bluetooth": "蓝牙网络",
+        "Bridge": "桥接",
+        "Bond": "链路聚合",
+        "FireWire": "FireWire",
+        "Modem": "调制解调器",
+        "PPP": "PPP",
+        "WWAN": "蜂窝网络",
+        "IPSec": "VPN",
+        "VPN": "VPN"
+    ]
+
+    private static func isVPNInterfaceType(_ type: String?) -> Bool {
+        guard let type else {
+            return false
+        }
+
+        return knownVPNTypes.contains(type)
+    }
+
+    private static func isVPNInterfaceName(_ name: String) -> Bool {
+        name.hasPrefix("utun") ||
+            name.hasPrefix("tun") ||
+            name.hasPrefix("tap") ||
+            name.hasPrefix("ppp") ||
+            name.hasPrefix("ipsec")
+    }
+
+    private static func interfaceTypeName(for type: String) -> String? {
+        interfaceTypeLabels[type]
     }
 }
 

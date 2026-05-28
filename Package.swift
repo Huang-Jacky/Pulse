@@ -21,7 +21,8 @@ let package = Package(
                 .linkedFramework("CoreLocation"),
                 .linkedFramework("CoreWLAN"),
                 .linkedFramework("IOKit"),
-                .linkedFramework("ServiceManagement")
+                .linkedFramework("ServiceManagement"),
+                .linkedFramework("SystemConfiguration")
             ]
         )
     ]
