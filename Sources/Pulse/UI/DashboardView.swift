@@ -41,13 +41,13 @@ struct DashboardView: View {
             Divider()
 
             HStack {
-                Label("系统资源监控", systemImage: "waveform.path.ecg")
+                Label(AppText.localized("系统资源监控", "System Resource Monitor"), systemImage: "waveform.path.ecg")
                     .font(.system(size: 10.5, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
 
                 Spacer()
 
-                Button("退出") {
+                Button(AppText.localized("退出", "Quit")) {
                     NSApplication.shared.terminate(nil)
                 }
                 .keyboardShortcut("q")
@@ -65,6 +65,7 @@ struct DashboardView: View {
                 endPoint: .bottomTrailing
             )
         )
+        .id(settings.appLanguage)
         .onAppear(perform: syncSelectedTab)
         .onChange(of: settings.detailCategories) { _ in
             syncSelectedTab()
@@ -97,7 +98,7 @@ private enum DashboardTab: Hashable, Identifiable {
         case let .metric(category):
             return category.title
         case .settings:
-            return "配置"
+            return AppText.localized("配置", "Settings")
         }
     }
 }
@@ -174,31 +175,31 @@ private struct SettingsCategoryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 10) {
-                SectionCard(title: "显示指标") {
+                SectionCard(title: AppText.localized("显示指标", "Metrics")) {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(Array(PulseSettings.orderedCategories.enumerated()), id: \.element) { index, category in
                             ToggleSettingRow(
                                 title: category.title,
-                                subtitle: category.supportsStatusBar ? "状态栏和详情页同时显示" : "仅在详情页显示",
+                                subtitle: category.supportsStatusBar ? AppText.localized("状态栏和详情页同时显示", "Shown in both the menu bar and details") : AppText.localized("仅在详情页显示", "Shown only in the details view"),
                                 isOn: settings.isEnabled(category),
                                 isToggleEnabled: !settings.isLastEnabledCategory(category),
-                                disabledSubtitle: "当前仅剩这一项已启用",
+                                disabledSubtitle: AppText.localized("当前仅剩这一项已启用", "This is the only enabled metric"),
                                 isLast: index == PulseSettings.orderedCategories.count - 1
                             ) { isEnabled in
                                 settings.setEnabled(category, isEnabled: isEnabled)
                             }
                         }
 
-                        Text("至少保留 1 个指标。关闭后会从详情标签移除，支持菜单栏的指标也会同步隐藏。")
+                        Text(AppText.localized("至少保留 1 个指标。关闭后会从详情标签移除，支持菜单栏的指标也会同步隐藏。", "Keep at least one metric enabled. Disabling it removes its detail tab and also hides it from the menu bar when supported."))
                             .font(.system(size: 9.5, weight: .medium, design: .rounded))
                             .foregroundStyle(.secondary)
                             .padding(.top, 4)
                     }
                 }
 
-                SectionCard(title: "菜单栏显示") {
+                SectionCard(title: AppText.localized("菜单栏显示", "Menu Bar")) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("仅影响菜单栏展示顺序和样式。")
+                        Text(AppText.localized("仅影响菜单栏展示顺序和样式。", "Only affects the menu bar order and appearance."))
                             .font(.system(size: 9.5, weight: .medium, design: .rounded))
                             .foregroundStyle(.secondary)
 
@@ -216,9 +217,9 @@ private struct SettingsCategoryView: View {
                             }
                         }
 
-                        PickerSettingRow(title: "展示样式") {
+                        PickerSettingRow(title: AppText.localized("展示样式", "Display Style")) {
                             Picker(
-                                "展示样式",
+                                AppText.localized("展示样式", "Display Style"),
                                 selection: Binding(
                                     get: { settings.statusBarDisplayMode },
                                     set: { settings.setStatusBarDisplayMode($0) }
@@ -233,9 +234,9 @@ private struct SettingsCategoryView: View {
                             .frame(width: 108)
                         }
 
-                        PickerSettingRow(title: "网络显示") {
+                        PickerSettingRow(title: AppText.localized("网络显示", "Network Layout")) {
                             Picker(
-                                "网络显示",
+                                AppText.localized("网络显示", "Network Layout"),
                                 selection: Binding(
                                     get: { settings.statusBarNetworkDisplayStyle },
                                     set: { settings.setStatusBarNetworkDisplayStyle($0) }
@@ -250,16 +251,35 @@ private struct SettingsCategoryView: View {
                             .frame(width: 108)
                         }
 
-                        Text("宽度不足时会自动切换到更紧凑的布局。")
+                        Text(AppText.localized("宽度不足时会自动切换到更紧凑的布局。", "Automatically switches to a tighter layout when width is limited."))
                             .font(.system(size: 9.5, weight: .medium, design: .rounded))
                             .foregroundStyle(.secondary)
                     }
                 }
 
-                SectionCard(title: "启动") {
+                SectionCard(title: AppText.localized("语言", "Language")) {
+                    PickerSettingRow(title: AppText.localized("界面语言", "Interface Language")) {
+                        Picker(
+                            AppText.localized("界面语言", "Interface Language"),
+                            selection: Binding(
+                                get: { settings.appLanguage },
+                                set: { settings.setAppLanguage($0) }
+                            )
+                        ) {
+                            ForEach(AppLanguage.allCases) { language in
+                                Text(language.optionTitle).tag(language)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(width: 108)
+                    }
+                }
+
+                SectionCard(title: AppText.localized("启动", "Launch")) {
                     VStack(alignment: .leading, spacing: 8) {
                         ToggleSettingRow(
-                            title: "随系统启动",
+                            title: AppText.localized("随系统启动", "Launch at Login"),
                             subtitle: settings.launchAtLoginSubtitle,
                             isOn: settings.launchesAtLogin,
                             isToggleEnabled: settings.canManageLaunchAtLogin,
@@ -270,7 +290,7 @@ private struct SettingsCategoryView: View {
                         }
 
                         if settings.shouldShowLaunchAtLoginApprovalAction {
-                            Button("打开系统设置中的登录项") {
+                            Button(AppText.localized("打开系统设置中的登录项", "Open Login Items in System Settings")) {
                                 settings.openLoginItemsSettings()
                             }
                             .font(.system(size: 10, weight: .semibold, design: .rounded))
@@ -278,19 +298,19 @@ private struct SettingsCategoryView: View {
 
                         if let launchAtLoginErrorMessage = settings.launchAtLoginErrorMessage,
                            !launchAtLoginErrorMessage.isEmpty {
-                            Text("操作失败：\(launchAtLoginErrorMessage)")
+                            Text("\(AppText.localized("操作失败", "Action failed")): \(launchAtLoginErrorMessage)")
                                 .font(.system(size: 9.5, weight: .medium, design: .rounded))
                                 .foregroundStyle(Palette.pink)
                         }
                     }
                 }
 
-                SectionCard(title: "采集间隔") {
+                SectionCard(title: AppText.localized("采集间隔", "Sampling Interval")) {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("刷新频率")
+                            Text(AppText.localized("刷新频率", "Refresh Rate"))
                                 .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            Text("1 到 30 秒，采样间隔时间越长更新越慢。")
+                            Text(AppText.localized("1 到 30 秒，采样间隔时间越长更新越慢。", "1 to 30 seconds. Longer intervals refresh more slowly."))
                                 .font(.system(size: 9.5, weight: .medium, design: .rounded))
                                 .foregroundStyle(.secondary)
                         }
@@ -298,14 +318,14 @@ private struct SettingsCategoryView: View {
                         Spacer()
 
                         Picker(
-                            "采集间隔",
+                            AppText.localized("采集间隔", "Sampling Interval"),
                             selection: Binding(
                                 get: { settings.refreshIntervalSeconds },
                                 set: { settings.setRefreshInterval(seconds: $0) }
                             )
                         ) {
                             ForEach(1 ... 30, id: \.self) { second in
-                                Text("\(second) 秒").tag(second)
+                                Text(AppText.localized("\(second) 秒", "\(second) s")).tag(second)
                             }
                         }
                         .labelsHidden()
@@ -314,11 +334,11 @@ private struct SettingsCategoryView: View {
                     }
                 }
 
-                SectionCard(title: "刷新策略") {
+                SectionCard(title: AppText.localized("刷新策略", "Refresh Strategy")) {
                     VStack(alignment: .leading, spacing: 8) {
                         ToggleSettingRow(
-                            title: "智能节能",
-                            subtitle: "系统处于低电量模式时自动降低采集频率。",
+                            title: AppText.localized("智能节能", "Adaptive Power Saving"),
+                            subtitle: AppText.localized("系统处于低电量模式时自动降低采集频率。", "Automatically lowers the sampling frequency while the system is in Low Power Mode."),
                             isOn: settings.adaptiveRefreshEnabled,
                             isToggleEnabled: true,
                             disabledSubtitle: nil,
@@ -371,7 +391,7 @@ private struct SettingsCategoryView: View {
                         Spacer(minLength: 8)
 
                         if case .updateAvailable = updateViewModel.status {
-                            Button("前往下载") {
+                            Button(AppText.localized("前往下载", "Download")) {
                                 updateViewModel.openLatestReleasePage()
                             }
                             .font(.system(size: 10, weight: .semibold, design: .rounded))
@@ -406,7 +426,7 @@ private struct SettingsCategoryView: View {
     }
 
     private var updateButtonTitle: String {
-        isCheckingForUpdates ? "检查中..." : "检查更新"
+        isCheckingForUpdates ? AppText.localized("检查中...", "Checking...") : AppText.localized("检查更新", "Check for Updates")
     }
 
     private var updateStatusMessage: String? {
@@ -414,17 +434,17 @@ private struct SettingsCategoryView: View {
         case .idle:
             return nil
         case .checking:
-            return "正在检查最新版本..."
+            return AppText.localized("正在检查最新版本...", "Checking the latest version...")
         case let .upToDate(version):
-            return "当前已是最新版本 \(version)。"
+            return AppText.localized("当前已是最新版本 \(version)。", "You're already on the latest version \(version).")
         case let .updateAvailable(version, _):
-            return "发现新版本 \(version)。"
+            return AppText.localized("发现新版本 \(version)。", "New version \(version) is available.")
         case let .aheadOfRelease(currentVersion, releaseVersion):
-            return "当前版本 \(currentVersion)，正式版最新为 \(releaseVersion)。"
+            return AppText.localized("当前版本 \(currentVersion)，正式版最新为 \(releaseVersion)。", "Current version \(currentVersion); latest public release is \(releaseVersion).")
         case let .failed(message):
             return message
         case .unconfigured:
-            return "更新源未配置，待 GitHub Releases 准备后启用。"
+            return AppText.localized("更新源未配置，待 GitHub Releases 准备后启用。", "Update source is not configured yet. Enable it after GitHub Releases is ready.")
         }
     }
 
@@ -599,7 +619,7 @@ private struct StatusBarOrderRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
-                Text(isEnabled ? "当前会显示在菜单栏" : "当前已关闭，仅调整顺序")
+                Text(isEnabled ? AppText.localized("当前会显示在菜单栏", "Currently shown in the menu bar") : AppText.localized("当前已关闭，仅调整顺序", "Currently hidden; order only"))
                     .font(.system(size: 9.5, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
             }
@@ -669,11 +689,11 @@ private struct CPUCategoryView: View {
                 }
             }
 
-            SectionCard(title: "核心") {
+            SectionCard(title: AppText.localized("核心", "Cores")) {
                 CoreUsageGrid(usages: snapshot.cpuDetails.perCoreUsage)
             }
 
-            SectionCard(title: "进程") {
+            SectionCard(title: AppText.localized("进程", "Processes")) {
                 ProcessList(rows: processRows, valueTitle: "CPU")
             }
         }
@@ -689,7 +709,7 @@ private struct MemoryCategoryView: View {
 
         VStack(alignment: .leading, spacing: 10) {
             HeroCard(
-                title: "内存",
+                title: AppText.localized("内存", "Memory"),
                 headline: snapshot.memory.summary,
                 trailing: snapshot.memory.detail,
                 accent: Palette.green,
@@ -700,7 +720,7 @@ private struct MemoryCategoryView: View {
                     HStack(spacing: 10) {
                         RingMetricView(
                             value: snapshot.memory.metricValue,
-                            label: "内存",
+                            label: AppText.localized("内存", "Memory"),
                             subtitle: snapshot.memory.summary,
                             tint: Palette.blue
                         )
@@ -722,8 +742,8 @@ private struct MemoryCategoryView: View {
                 }
             }
 
-            SectionCard(title: "进程") {
-                ProcessList(rows: processRows, valueTitle: "内存")
+            SectionCard(title: AppText.localized("进程", "Processes")) {
+                ProcessList(rows: processRows, valueTitle: AppText.localized("内存", "Memory"))
             }
         }
     }
@@ -739,7 +759,7 @@ private struct DiskCategoryView: View {
 
         VStack(alignment: .leading, spacing: 10) {
             HeroCard(
-                title: "磁盘",
+                title: AppText.localized("磁盘", "Disk"),
                 headline: snapshot.disk.summary,
                 trailing: snapshot.disk.detail,
                 accent: Palette.blue,
@@ -764,12 +784,14 @@ private struct DiskCategoryView: View {
 
                 HStack(spacing: 8) {
                     NetworkStatCard(
-                        title: "读取",
+                        title: AppText.localized("读取", "Read"),
+                        symbolName: "arrow.down.circle.fill",
                         value: MetricFormatter.bytesPerSecond(snapshot.diskDetails.readRate),
                         tint: Palette.blue
                     )
                     NetworkStatCard(
-                        title: "写入",
+                        title: AppText.localized("写入", "Write"),
+                        symbolName: "arrow.up.circle.fill",
                         value: MetricFormatter.bytesPerSecond(snapshot.diskDetails.writeRate),
                         tint: Palette.pink
                     )
@@ -778,12 +800,12 @@ private struct DiskCategoryView: View {
                 DiskHistoryChart(history: snapshot.diskDetails.history)
             }
 
-            SectionCard(title: "累计") {
+            SectionCard(title: AppText.localized("累计", "Totals")) {
                 DetailRowList(rows: Array(activityRows.dropFirst(2)))
             }
 
-            SectionCard(title: "卷") {
-                ProcessList(rows: volumeRows, valueTitle: "已用")
+            SectionCard(title: AppText.localized("卷", "Volumes")) {
+                ProcessList(rows: volumeRows, valueTitle: AppText.localized("已用", "Used"))
             }
         }
     }
@@ -798,9 +820,9 @@ private struct BatteryCategoryView: View {
 
         VStack(alignment: .leading, spacing: 10) {
             HeroCard(
-                title: "电池",
+                title: AppText.localized("电池", "Battery"),
                 headline: snapshot.battery?.summary ?? "--",
-                trailing: snapshot.battery?.detail ?? "当前设备未检测到内置电池",
+                trailing: snapshot.battery?.detail ?? AppText.localized("当前设备未检测到内置电池", "No built-in battery detected on this device"),
                 accent: Palette.green,
                 symbolName: snapshot.battery?.icon
             ) {
@@ -810,13 +832,13 @@ private struct BatteryCategoryView: View {
                     HStack(spacing: 10) {
                         RingMetricView(
                             value: snapshot.battery?.level ?? 0,
-                            label: "电量",
+                            label: AppText.localized("电量", "Charge"),
                             subtitle: snapshot.battery?.summary ?? "--",
                             tint: Palette.green
                         )
                         RingMetricView(
                             value: snapshot.batteryDetails?.healthRatio ?? 0,
-                            label: "健康",
+                            label: AppText.localized("健康", "Health"),
                             subtitle: snapshot.batteryDetails?.healthRatio.map(MetricFormatter.percent) ?? "--",
                             tint: Palette.blue
                         )
@@ -828,7 +850,7 @@ private struct BatteryCategoryView: View {
                 MetricPillGrid(rows: healthRows)
             }
 
-            SectionCard(title: "供电") {
+            SectionCard(title: AppText.localized("供电", "Power")) {
                 DetailRowList(rows: powerRows)
             }
         }
@@ -844,21 +866,23 @@ private struct NetworkCategoryView: View {
 
         VStack(alignment: .leading, spacing: 10) {
             HeroCard(
-                title: "网络",
+                title: AppText.localized("网络", "Network"),
                 headline: snapshot.network.download,
-                trailing: "下载 · 上传 \(snapshot.network.upload)",
+                trailing: AppText.localized("下载 · 上传 \(snapshot.network.upload)", "Download · Upload \(snapshot.network.upload)"),
                 accent: Palette.pink,
                 symbolName: "network"
             ) {
                 VStack(spacing: 10) {
                     HStack(spacing: 8) {
                         NetworkStatCard(
-                            title: "上传",
+                            title: AppText.localized("上传", "Upload"),
+                            symbolName: "arrow.up.circle.fill",
                             value: snapshot.network.upload,
                             tint: Palette.pink
                         )
                         NetworkStatCard(
-                            title: "下载",
+                            title: AppText.localized("下载", "Download"),
+                            symbolName: "arrow.down.circle.fill",
                             value: snapshot.network.download,
                             tint: Palette.blue
                         )
@@ -868,12 +892,12 @@ private struct NetworkCategoryView: View {
                 }
             }
 
-            SectionCard(title: "当前连接") {
+            SectionCard(title: AppText.localized("当前连接", "Current Connection")) {
                 MetricPillGrid(rows: connectionRows)
             }
 
-            SectionCard(title: "接口流量") {
-                ProcessList(rows: interfaceRows, valueTitle: "流量")
+            SectionCard(title: AppText.localized("接口流量", "Interface Throughput")) {
+                ProcessList(rows: interfaceRows, valueTitle: AppText.localized("流量", "Traffic"))
             }
         }
     }
@@ -1159,10 +1183,10 @@ private struct MemoryBreakdownGrid: View {
 
     var rows: [SystemSnapshot.DetailRow] {
         [
-            .init(label: "活跃", value: MetricFormatter.bytes(details.active), secondary: nil),
-            .init(label: "有线", value: MetricFormatter.bytes(details.wired), secondary: nil),
-            .init(label: "压缩", value: MetricFormatter.bytes(details.compressed), secondary: nil),
-            .init(label: "空闲", value: MetricFormatter.bytes(details.free), secondary: nil)
+            .init(label: AppText.localized("活跃", "Active"), value: MetricFormatter.bytes(details.active), secondary: nil),
+            .init(label: AppText.localized("有线", "Wired"), value: MetricFormatter.bytes(details.wired), secondary: nil),
+            .init(label: AppText.localized("压缩", "Compressed"), value: MetricFormatter.bytes(details.compressed), secondary: nil),
+            .init(label: AppText.localized("空闲", "Free"), value: MetricFormatter.bytes(details.free), secondary: nil)
         ]
     }
 
@@ -1193,7 +1217,7 @@ private struct DetailRowList: View {
     var body: some View {
         VStack(spacing: 8) {
             if rows.isEmpty {
-                Text("暂无数据")
+                Text(AppText.localized("暂无数据", "No data"))
                     .font(.system(size: 11, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1208,6 +1232,7 @@ private struct DetailRowList: View {
 
 private struct NetworkStatCard: View {
     let title: String
+    let symbolName: String
     let value: String
     let tint: Color
 
@@ -1228,12 +1253,6 @@ private struct NetworkStatCard: View {
         )
     }
 
-    private var symbolName: String {
-        if title.contains("上") || title.contains("写") {
-            return "arrow.up.circle.fill"
-        }
-        return "arrow.down.circle.fill"
-    }
 }
 
 private struct ProcessList: View {
@@ -1243,13 +1262,13 @@ private struct ProcessList: View {
     var body: some View {
         VStack(spacing: 6) {
             if rows.isEmpty {
-                Text("暂无数据")
+                Text(AppText.localized("暂无数据", "No data"))
                     .font(.system(size: 11, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 HStack {
-                    Text("名称")
+                    Text(AppText.localized("名称", "Name"))
                     Spacer()
                     Text(valueTitle)
                 }
@@ -1323,7 +1342,7 @@ enum AppMetadata {
     )
 
     static var currentVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "开发版"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? AppText.localized("开发版", "Dev Build")
     }
 
     static var versionDescription: String {
@@ -1331,9 +1350,9 @@ enum AppMetadata {
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
 
         if let build, build != version {
-            return "版本 \(version) (\(build))"
+            return AppText.localized("版本 \(version) (\(build))", "Version \(version) (\(build))")
         }
-        return "版本 \(version)"
+        return AppText.localized("版本 \(version)", "Version \(version)")
     }
 
     static var headerIcon: NSImage? {

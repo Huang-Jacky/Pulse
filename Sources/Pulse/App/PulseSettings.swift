@@ -5,6 +5,7 @@ import Foundation
 struct MonitorConfiguration: Sendable, Equatable {
     let enabledCategories: Set<SystemSnapshot.DetailCategory>
     let refreshIntervalSeconds: Int
+    let language: AppLanguage
 
     func isEnabled(_ category: SystemSnapshot.DetailCategory) -> Bool {
         enabledCategories.contains(category)
@@ -20,9 +21,9 @@ enum StatusBarDisplayMode: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .standard:
-            return "标准"
+            return AppText.localized("标准", "Standard")
         case .compact:
-            return "紧凑"
+            return AppText.localized("紧凑", "Compact")
         }
     }
 }
@@ -36,9 +37,9 @@ enum StatusBarNetworkDisplayStyle: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .dualLine:
-            return "双行"
+            return AppText.localized("双行", "Dual line")
         case .singleLine:
-            return "单行"
+            return AppText.localized("单行", "Single line")
         }
     }
 }
@@ -52,6 +53,7 @@ enum LaunchAtLoginStatus: Equatable {
 @MainActor
 final class PulseSettings: ObservableObject {
     private enum Key {
+        static let appLanguage = AppLanguage.userDefaultsKey
         static let enabledCategories = "pulse.enabledCategories"
         static let refreshIntervalSeconds = "pulse.refreshIntervalSeconds"
         static let legacyRefreshIntervalMinutes = "pulse.refreshIntervalMinutes"
@@ -75,6 +77,7 @@ final class PulseSettings: ObservableObject {
     @Published private(set) var statusBarOrder: [SystemSnapshot.DetailCategory]
     @Published private(set) var refreshIntervalSeconds: Int
     @Published private(set) var adaptiveRefreshEnabled: Bool
+    @Published private(set) var appLanguage: AppLanguage
     @Published private(set) var statusBarDisplayMode: StatusBarDisplayMode
     @Published private(set) var statusBarNetworkDisplayStyle: StatusBarNetworkDisplayStyle
     @Published private(set) var launchAtLoginStatus: LaunchAtLoginStatus
@@ -102,6 +105,12 @@ final class PulseSettings: ObservableObject {
         statusBarOrder = Self.resolveStatusBarOrder(
             from: userDefaults.array(forKey: Key.statusBarOrder) as? [String] ?? []
         )
+        if let rawValue = userDefaults.string(forKey: Key.appLanguage),
+           let language = AppLanguage(rawValue: rawValue) {
+            appLanguage = language
+        } else {
+            appLanguage = .chinese
+        }
 
         if let storedSeconds = userDefaults.object(forKey: Key.refreshIntervalSeconds) as? Int {
             refreshIntervalSeconds = Self.clampRefreshInterval(storedSeconds)
@@ -141,7 +150,8 @@ final class PulseSettings: ObservableObject {
     var monitorConfiguration: MonitorConfiguration {
         MonitorConfiguration(
             enabledCategories: enabledCategories,
-            refreshIntervalSeconds: refreshIntervalSeconds
+            refreshIntervalSeconds: refreshIntervalSeconds,
+            language: appLanguage
         )
     }
 
@@ -169,11 +179,11 @@ final class PulseSettings: ObservableObject {
     var launchAtLoginSubtitle: String {
         switch launchAtLoginStatus {
         case .enabled:
-            return "登录后自动启动并保持常驻菜单栏"
+            return AppText.localized("登录后自动启动并保持常驻菜单栏", "Launch automatically after login and stay in the menu bar", language: appLanguage)
         case .disabled:
-            return "关闭后仅在手动启动应用时运行"
+            return AppText.localized("关闭后仅在手动启动应用时运行", "Run only when the app is launched manually", language: appLanguage)
         case .requiresApproval:
-            return "已请求启用，仍需在系统设置的登录项里允许"
+            return AppText.localized("已请求启用，仍需在系统设置的登录项里允许", "Requested already. Allow it in Login Items within System Settings", language: appLanguage)
         }
     }
 
@@ -227,6 +237,15 @@ final class PulseSettings: ObservableObject {
 
         adaptiveRefreshEnabled = isEnabled
         userDefaults.set(isEnabled, forKey: Key.adaptiveRefreshEnabled)
+    }
+
+    func setAppLanguage(_ language: AppLanguage) {
+        guard appLanguage != language else {
+            return
+        }
+
+        appLanguage = language
+        userDefaults.set(language.rawValue, forKey: Key.appLanguage)
     }
 
     func canMoveStatusBarCategory(_ category: SystemSnapshot.DetailCategory, by delta: Int) -> Bool {

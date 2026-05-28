@@ -21,13 +21,13 @@ struct SystemSnapshot: Sendable {
             case .cpu:
                 return "CPU"
             case .memory:
-                return "内存"
+                return AppText.localized("内存", "Memory")
             case .disk:
-                return "磁盘"
+                return AppText.localized("磁盘", "Disk")
             case .battery:
-                return "电池"
+                return AppText.localized("电池", "Battery")
             case .network:
-                return "网络"
+                return AppText.localized("网络", "Network")
             }
         }
 
@@ -214,31 +214,32 @@ struct SystemSnapshot: Sendable {
         [cpu, memory, disk]
     }
 
-    static let placeholder = SystemSnapshot(
+    static var placeholder: SystemSnapshot {
+        .init(
         cpu: GaugeMetric(
             category: .cpu,
             title: "CPU",
             value: 0,
             summary: "--",
-            detail: "等待采样",
+            detail: AppText.localized("等待采样", "Waiting for samples"),
             accent: "cpu",
             alertLevel: .normal
         ),
         memory: GaugeMetric(
             category: .memory,
-            title: "内存",
+            title: AppText.localized("内存", "Memory"),
             value: 0,
             summary: "--",
-            detail: "等待采样",
+            detail: AppText.localized("等待采样", "Waiting for samples"),
             accent: "memory",
             alertLevel: .normal
         ),
         disk: GaugeMetric(
             category: .disk,
-            title: "磁盘",
+            title: AppText.localized("磁盘", "Disk"),
             value: 0,
             summary: "--",
-            detail: "等待采样",
+            detail: AppText.localized("等待采样", "Waiting for samples"),
             accent: "disk",
             alertLevel: .normal
         ),
@@ -275,7 +276,7 @@ struct SystemSnapshot: Sendable {
             pageInCount: 0,
             pageOutCount: 0,
             pressureLevel: .normal,
-            pressureSummary: "正常",
+            pressureSummary: AppText.localized("正常", "Normal"),
             history: []
         ),
         diskDetails: DiskDetails(
@@ -293,32 +294,33 @@ struct SystemSnapshot: Sendable {
         ),
         detailPanels: DetailPanels(
             cpu: DetailPanel(
-                title: "CPU 详细数据",
-                subtitle: "等待采样",
+                title: AppText.localized("CPU 详细数据", "CPU Details"),
+                subtitle: AppText.localized("等待采样", "Waiting for samples"),
                 sections: []
             ),
             memory: DetailPanel(
-                title: "内存 详细数据",
-                subtitle: "等待采样",
+                title: AppText.localized("内存 详细数据", "Memory Details"),
+                subtitle: AppText.localized("等待采样", "Waiting for samples"),
                 sections: []
             ),
             disk: DetailPanel(
-                title: "磁盘 详细数据",
-                subtitle: "等待采样",
+                title: AppText.localized("磁盘 详细数据", "Disk Details"),
+                subtitle: AppText.localized("等待采样", "Waiting for samples"),
                 sections: []
             ),
             battery: DetailPanel(
-                title: "电池 详细数据",
-                subtitle: "等待采样",
+                title: AppText.localized("电池 详细数据", "Battery Details"),
+                subtitle: AppText.localized("等待采样", "Waiting for samples"),
                 sections: []
             ),
             network: DetailPanel(
-                title: "网络 详细数据",
-                subtitle: "等待采样",
+                title: AppText.localized("网络 详细数据", "Network Details"),
+                subtitle: AppText.localized("等待采样", "Waiting for samples"),
                 sections: []
             )
         )
     )
+    }
 }
 
 enum MetricFormatter {
@@ -430,9 +432,9 @@ enum MetricFormatter {
         return (displayValue, unitIndex)
     }
 
-    static func timeRemaining(minutes: Int) -> String {
+    static func timeRemaining(minutes: Int, language: AppLanguage = .current) -> String {
         guard minutes >= 0 else {
-            return "计算中"
+            return AppText.localized("计算中", "Calculating", language: language)
         }
 
         let hours = minutes / 60
@@ -445,21 +447,21 @@ enum MetricFormatter {
         return "\(remainingMinutes)m"
     }
 
-    static func uptime(_ interval: TimeInterval) -> String {
+    static func uptime(_ interval: TimeInterval, language: AppLanguage = .current) -> String {
         let totalMinutes = Int(interval / 60)
         let days = totalMinutes / (24 * 60)
         let hours = (totalMinutes % (24 * 60)) / 60
         let minutes = totalMinutes % 60
 
         if days > 0 {
-            return "\(days)天 \(hours)小时"
+            return AppText.localized("\(days)天 \(hours)小时", "\(days)d \(hours)h", language: language)
         }
 
         if hours > 0 {
-            return "\(hours)小时 \(minutes)分"
+            return AppText.localized("\(hours)小时 \(minutes)分", "\(hours)h \(minutes)m", language: language)
         }
 
-        return "\(minutes)分"
+        return AppText.localized("\(minutes)分", "\(minutes)m", language: language)
     }
 
     static func compactCount(_ value: UInt64) -> String {
@@ -486,14 +488,14 @@ enum MetricFormatter {
         "\(value) mAh"
     }
 
-    static func memoryPressureSummary(for level: SystemSnapshot.MetricAlertLevel) -> String {
+    static func memoryPressureSummary(for level: SystemSnapshot.MetricAlertLevel, language: AppLanguage = .current) -> String {
         switch level {
         case .normal:
-            return "正常"
+            return AppText.localized("正常", "Normal", language: language)
         case .warning:
-            return "偏高"
+            return AppText.localized("偏高", "Elevated", language: language)
         case .critical:
-            return "紧张"
+            return AppText.localized("紧张", "Critical", language: language)
         }
     }
 }

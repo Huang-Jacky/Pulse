@@ -78,15 +78,15 @@ final class UpdateViewModel: ObservableObject {
             let (data, response) = try await URLSession.shared.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
-                status = .failed(message: "更新服务返回异常。")
+                status = .failed(message: AppText.localized("更新服务返回异常。", "Unexpected response from the update service."))
                 return
             }
 
             guard httpResponse.statusCode == 200 else {
                 if httpResponse.statusCode == 404 {
-                    status = .failed(message: "还没有可用的发布版本。")
+                    status = .failed(message: AppText.localized("还没有可用的发布版本。", "No release is available yet."))
                 } else {
-                    status = .failed(message: "检查失败（\(httpResponse.statusCode)）。")
+                    status = .failed(message: AppText.localized("检查失败（\(httpResponse.statusCode)）。", "Update check failed (\(httpResponse.statusCode))."))
                 }
                 return
             }
@@ -95,7 +95,7 @@ final class UpdateViewModel: ObservableObject {
             let latestVersion = Self.normalizeVersion(release.tagName)
 
             guard !latestVersion.isEmpty else {
-                status = .failed(message: "未读取到有效版本号。")
+                status = .failed(message: AppText.localized("未读取到有效版本号。", "No valid version number was found."))
                 return
             }
 
@@ -109,7 +109,7 @@ final class UpdateViewModel: ObservableObject {
                 status = .upToDate(version: currentVersion)
             }
         } catch {
-            status = .failed(message: "检查失败，请稍后重试。")
+            status = .failed(message: AppText.localized("检查失败，请稍后重试。", "Update check failed. Please try again later."))
         }
     }
 

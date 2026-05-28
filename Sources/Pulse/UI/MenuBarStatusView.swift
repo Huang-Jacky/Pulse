@@ -131,17 +131,17 @@ struct MenuBarStatusView: View {
             case .cpu:
                 return "CPU \(snapshot.cpu.summary)"
             case .memory:
-                return "内存 \(snapshot.memory.summary)"
+                return "\(AppText.localized("内存", "Memory")) \(snapshot.memory.summary)"
             case .disk:
-                return "磁盘 \(snapshot.disk.summary)"
+                return "\(AppText.localized("磁盘", "Disk")) \(snapshot.disk.summary)"
             case .battery:
-                return "电池 \(snapshot.battery?.summary ?? "--")"
+                return "\(AppText.localized("电池", "Battery")) \(snapshot.battery?.summary ?? "--")"
             case .network:
-                return "网络下行 \(snapshot.network.download)，上行 \(snapshot.network.upload)"
+                return AppText.localized("网络下行 \(snapshot.network.download)，上行 \(snapshot.network.upload)", "Network down \(snapshot.network.download), up \(snapshot.network.upload)")
             }
         }
 
-        return labels.isEmpty ? "Pulse 未启用监控指标" : labels.joined(separator: "，")
+        return labels.isEmpty ? AppText.localized("Pulse 未启用监控指标", "Pulse has no monitoring metrics enabled") : labels.joined(separator: AppText.localized("，", ", "))
     }
 }
 

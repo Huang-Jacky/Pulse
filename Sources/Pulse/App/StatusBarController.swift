@@ -84,6 +84,17 @@ final class StatusBarController: NSObject {
                 self.updateStatusView(with: self.monitor.snapshot)
             }
             .store(in: &cancellables)
+
+        settings.$appLanguage
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else {
+                    return
+                }
+                self.updateStatusView(with: self.monitor.snapshot)
+            }
+            .store(in: &cancellables)
     }
 
     private func updateStatusView(with snapshot: SystemSnapshot) {

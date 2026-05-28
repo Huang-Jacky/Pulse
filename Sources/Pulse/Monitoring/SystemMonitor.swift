@@ -20,13 +20,13 @@ final class SystemMonitor: ObservableObject {
             var description: String {
                 switch self {
                 case .base:
-                    return "按基础采样间隔运行"
+                    return AppText.localized("按基础采样间隔运行", "Running at the base sampling interval")
                 case .dashboardActive:
-                    return "面板打开时提升到 1 秒刷新"
+                    return AppText.localized("面板打开时提升到 1 秒刷新", "Refresh boosted to 1 second while the panel is open")
                 case .batterySaver:
-                    return "电池供电时自动放慢刷新"
+                    return AppText.localized("电池供电时自动放慢刷新", "Refresh slowed automatically on battery power")
                 case .lowPowerMode:
-                    return "低电量模式下自动放慢刷新"
+                    return AppText.localized("低电量模式下自动放慢刷新", "Refresh slowed automatically in Low Power Mode")
                 }
             }
         }
@@ -131,6 +131,20 @@ final class SystemMonitor: ObservableObject {
 
                 Task {
                     await self.sampler.updateEnabledCategories(categories)
+                    await self.refresh(forceStaticRefresh: true)
+                }
+            }
+            .store(in: &settingsCancellables)
+
+        settings.$appLanguage
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                guard let self else {
+                    return
+                }
+
+                Task {
                     await self.refresh(forceStaticRefresh: true)
                 }
             }
@@ -276,14 +290,15 @@ private actor SystemSampler {
 
     func sample(configuration: MonitorConfiguration, forceStaticRefresh _: Bool = false) -> SystemSnapshot {
         enabledCategories = configuration.enabledCategories
+        let language = configuration.language
 
-        let cpuReading = configuration.isEnabled(.cpu) ? readCPU() : .placeholder
-        let memoryReading = configuration.isEnabled(.memory) ? readMemory() : .placeholder
-        let diskReading = configuration.isEnabled(.disk) ? readDisk() : .placeholder
-        let batteryReading = readBattery()
+        let cpuReading = configuration.isEnabled(.cpu) ? readCPU(language: language) : .placeholder
+        let memoryReading = configuration.isEnabled(.memory) ? readMemory(language: language) : .placeholder
+        let diskReading = configuration.isEnabled(.disk) ? readDisk(language: language) : .placeholder
+        let batteryReading = readBattery(language: language)
         let networkReading = configuration.isEnabled(.network) ? readNetwork() : .placeholder
-        let wifiDetails = configuration.isEnabled(.network) ? wifiSampler.sample() : nil
-        let networkEnvironment = configuration.isEnabled(.network) ? networkEnvironmentSampler.sample() : .empty
+        let wifiDetails = configuration.isEnabled(.network) ? wifiSampler.sample(language: language) : nil
+        let networkEnvironment = configuration.isEnabled(.network) ? networkEnvironmentSampler.sample(language: language) : .empty
 
         if configuration.isEnabled(.cpu) {
             appendCPUHistory(user: cpuReading.userUsage, system: cpuReading.systemUsage)
@@ -348,7 +363,7 @@ private actor SystemSampler {
                 pageInCount: memoryReading.pageInCount,
                 pageOutCount: memoryReading.pageOutCount,
                 pressureLevel: memoryReading.pressureLevel,
-                pressureSummary: MetricFormatter.memoryPressureSummary(for: memoryReading.pressureLevel),
+                pressureSummary: MetricFormatter.memoryPressureSummary(for: memoryReading.pressureLevel, language: language),
                 history: memoryHistory
             ),
             diskDetails: SystemSnapshot.DiskDetails(
@@ -368,7 +383,7 @@ private actor SystemSampler {
         )
     }
 
-    private func readCPU() -> CPUReading {
+    private func readCPU(language: AppLanguage) -> CPUReading {
         let reading = cpuSampler.sample()
         return CPUReading(
             metric: .init(
@@ -376,7 +391,11 @@ private actor SystemSampler {
                 title: "CPU",
                 value: reading.totalUsage,
                 summary: MetricFormatter.percent(reading.totalUsage),
-                detail: "用户 \(MetricFormatter.percent(reading.userUsage)) · 系统 \(MetricFormatter.percent(reading.systemUsage))",
+                detail: AppText.localized(
+                    "用户 \(MetricFormatter.percent(reading.userUsage)) · 系统 \(MetricFormatter.percent(reading.systemUsage))",
+                    "User \(MetricFormatter.percent(reading.userUsage)) · System \(MetricFormatter.percent(reading.systemUsage))",
+                    language: language
+                ),
                 accent: "cpu",
                 alertLevel: MetricFormatter.alertLevel(for: .cpu, value: reading.totalUsage)
             ),
@@ -386,11 +405,11 @@ private actor SystemSampler {
             idleUsage: reading.idleUsage,
             perCoreUsage: reading.perCoreUsage,
             loadAverages: readLoadAverages(),
-            uptime: MetricFormatter.uptime(ProcessInfo.processInfo.systemUptime)
+            uptime: MetricFormatter.uptime(ProcessInfo.processInfo.systemUptime, language: language)
         )
     }
 
-    private func readMemory() -> MemoryReading {
+    private func readMemory(language: AppLanguage) -> MemoryReading {
         var stats = vm_statistics64()
         var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.stride / MemoryLayout<integer_t>.stride)
 
@@ -406,10 +425,10 @@ private actor SystemSampler {
             return .failure(
                 metric: .init(
                     category: .memory,
-                    title: "内存",
+                    title: AppText.localized("内存", "Memory", language: language),
                     value: 0,
                     summary: "--",
-                    detail: "读取失败",
+                    detail: AppText.localized("读取失败", "Read failed", language: language),
                     accent: "memory",
                     alertLevel: .normal
                 )
@@ -438,7 +457,7 @@ private actor SystemSampler {
         return MemoryReading(
             metric: .init(
                 category: .memory,
-                title: "内存",
+                title: AppText.localized("内存", "Memory", language: language),
                 value: ratio,
                 summary: MetricFormatter.percent(ratio),
                 detail: "\(MetricFormatter.bytes(used)) / \(MetricFormatter.bytes(totalMemory))",
@@ -460,7 +479,7 @@ private actor SystemSampler {
         )
     }
 
-    private func readDisk() -> DiskReading {
+    private func readDisk(language: AppLanguage) -> DiskReading {
         do {
             let rootVolume = URL(fileURLWithPath: "/", isDirectory: true)
             let resourceValues = try rootVolume.resourceValues(forKeys: [
@@ -493,7 +512,7 @@ private actor SystemSampler {
             return DiskReading(
                 metric: .init(
                     category: .disk,
-                    title: "磁盘",
+                    title: AppText.localized("磁盘", "Disk", language: language),
                     value: ratio,
                     summary: MetricFormatter.percent(ratio),
                     detail: "\(MetricFormatter.diskBytes(used)) / \(MetricFormatter.diskBytes(total))",
@@ -509,10 +528,10 @@ private actor SystemSampler {
             return .failure(
                 metric: .init(
                     category: .disk,
-                    title: "磁盘",
+                    title: AppText.localized("磁盘", "Disk", language: language),
                     value: 0,
                     summary: "--",
-                    detail: "读取失败",
+                    detail: AppText.localized("读取失败", "Read failed", language: language),
                     accent: "disk",
                     alertLevel: .normal
                 )
@@ -520,7 +539,7 @@ private actor SystemSampler {
         }
     }
 
-    private func readBattery() -> BatteryReading {
+    private func readBattery(language: AppLanguage) -> BatteryReading {
         let powerSourceInfo = IOPSCopyPowerSourcesInfo().takeRetainedValue()
         let powerSources = IOPSCopyPowerSourcesList(powerSourceInfo).takeRetainedValue() as Array
 
@@ -543,18 +562,26 @@ private actor SystemSampler {
         let detail: String
         if isCharging {
             if timeToFull >= 0 {
-                detail = "充电中 · \(MetricFormatter.timeRemaining(minutes: timeToFull)) 到充满"
+                detail = AppText.localized(
+                    "充电中 · \(MetricFormatter.timeRemaining(minutes: timeToFull, language: language)) 到充满",
+                    "Charging · \(MetricFormatter.timeRemaining(minutes: timeToFull, language: language)) until full",
+                    language: language
+                )
             } else {
-                detail = "充电中"
+                detail = AppText.localized("充电中", "Charging", language: language)
             }
         } else if state == kIOPSBatteryPowerValue {
             if timeToEmpty >= 0 {
-                detail = "电池供电 · \(MetricFormatter.timeRemaining(minutes: timeToEmpty)) 剩余"
+                detail = AppText.localized(
+                    "电池供电 · \(MetricFormatter.timeRemaining(minutes: timeToEmpty, language: language)) 剩余",
+                    "On battery · \(MetricFormatter.timeRemaining(minutes: timeToEmpty, language: language)) remaining",
+                    language: language
+                )
             } else {
-                detail = "电池供电"
+                detail = AppText.localized("电池供电", "On battery", language: language)
             }
         } else {
-            detail = "接通电源"
+            detail = AppText.localized("接通电源", "Power adapter connected", language: language)
         }
 
         let registry = readBatteryRegistryDetails()
@@ -815,9 +842,9 @@ private actor SystemSampler {
             }
 
             let name = if url.path == "/" {
-                "系统卷"
+                AppText.localized("系统卷", "System Volume")
             } else if url.path == "/System/Volumes/Data" {
-                "数据卷"
+                AppText.localized("数据卷", "Data Volume")
             } else {
                 values.volumeName ?? url.lastPathComponent
             }
@@ -867,6 +894,7 @@ private actor SystemSampler {
         mountedVolumes: [MountedVolume],
         networkAddresses: [SystemSnapshot.NetworkAddress]
     ) -> SystemSnapshot.DetailPanels {
+        let language = configuration.language
         let cpuTopProcesses = processes
             .sorted { $0.cpu > $1.cpu }
             .prefix(6)
@@ -892,117 +920,123 @@ private actor SystemSampler {
         let cpuPanel = configuration.isEnabled(.cpu)
             ? SystemSnapshot.DetailPanel(
                 title: "CPU",
-                subtitle: "处理器状态、负载和进程占用",
+                subtitle: AppText.localized("处理器状态、负载和进程占用", "Processor status, load, and top processes", language: language),
                 sections: [
                     .init(
-                        title: "摘要",
+                        title: AppText.localized("摘要", "Summary", language: language),
                         rows: [
-                            .init(label: "负载 1m", value: String(format: "%.2f", cpu.loadAverages[safe: 0] ?? 0), secondary: nil),
-                            .init(label: "负载 5m", value: String(format: "%.2f", cpu.loadAverages[safe: 1] ?? 0), secondary: nil),
-                            .init(label: "负载 15m", value: String(format: "%.2f", cpu.loadAverages[safe: 2] ?? 0), secondary: nil),
-                            .init(label: "运行时间", value: cpu.uptime, secondary: nil)
+                            .init(label: AppText.localized("负载 1m", "Load 1m", language: language), value: String(format: "%.2f", cpu.loadAverages[safe: 0] ?? 0), secondary: nil),
+                            .init(label: AppText.localized("负载 5m", "Load 5m", language: language), value: String(format: "%.2f", cpu.loadAverages[safe: 1] ?? 0), secondary: nil),
+                            .init(label: AppText.localized("负载 15m", "Load 15m", language: language), value: String(format: "%.2f", cpu.loadAverages[safe: 2] ?? 0), secondary: nil),
+                            .init(label: AppText.localized("运行时间", "Uptime", language: language), value: cpu.uptime, secondary: nil)
                         ]
                     ),
-                    .init(title: "进程", rows: Array(cpuTopProcesses))
+                    .init(title: AppText.localized("进程", "Processes", language: language), rows: Array(cpuTopProcesses))
                 ]
             )
             : disabledPanel(title: "CPU")
 
         let memoryPanel = configuration.isEnabled(.memory)
             ? SystemSnapshot.DetailPanel(
-                title: "内存",
-                subtitle: "物理内存、交换区和进程占用",
+                title: AppText.localized("内存", "Memory", language: language),
+                subtitle: AppText.localized("物理内存、交换区和进程占用", "Physical memory, swap, and top processes", language: language),
                 sections: [
                     .init(
-                        title: "虚拟内存",
+                        title: AppText.localized("虚拟内存", "Virtual Memory", language: language),
                         rows: [
-                            .init(label: "压力", value: MetricFormatter.memoryPressureSummary(for: memory.pressureLevel), secondary: nil),
-                            .init(label: "交换已用", value: MetricFormatter.bytes(memory.swapUsed), secondary: memory.swapTotal > 0 ? "总计 \(MetricFormatter.bytes(memory.swapTotal))" : nil),
-                            .init(label: "写入分页", value: MetricFormatter.compactCount(memory.pageOutCount), secondary: nil),
-                            .init(label: "读取分页", value: MetricFormatter.compactCount(memory.pageInCount), secondary: nil)
+                            .init(label: AppText.localized("压力", "Pressure", language: language), value: MetricFormatter.memoryPressureSummary(for: memory.pressureLevel, language: language), secondary: nil),
+                            .init(label: AppText.localized("交换已用", "Swap Used", language: language), value: MetricFormatter.bytes(memory.swapUsed), secondary: memory.swapTotal > 0 ? AppText.localized("总计 \(MetricFormatter.bytes(memory.swapTotal))", "Total \(MetricFormatter.bytes(memory.swapTotal))", language: language) : nil),
+                            .init(label: AppText.localized("写入分页", "Page Outs", language: language), value: MetricFormatter.compactCount(memory.pageOutCount), secondary: nil),
+                            .init(label: AppText.localized("读取分页", "Page Ins", language: language), value: MetricFormatter.compactCount(memory.pageInCount), secondary: nil)
                         ]
                     ),
-                    .init(title: "进程", rows: Array(memoryTopProcesses))
+                    .init(title: AppText.localized("进程", "Processes", language: language), rows: Array(memoryTopProcesses))
                 ]
             )
-            : disabledPanel(title: "内存")
+            : disabledPanel(title: AppText.localized("内存", "Memory", language: language))
 
         let diskRows: [SystemSnapshot.DetailRow]
         if disk.total > 0 {
             diskRows = [
-                .init(label: "已用", value: MetricFormatter.diskBytes(disk.used), secondary: disk.metric.summary),
-                .init(label: "可用", value: MetricFormatter.diskBytes(disk.available), secondary: nil),
-                .init(label: "总量", value: MetricFormatter.diskBytes(disk.total), secondary: nil)
+                .init(label: AppText.localized("已用", "Used", language: language), value: MetricFormatter.diskBytes(disk.used), secondary: disk.metric.summary),
+                .init(label: AppText.localized("可用", "Available", language: language), value: MetricFormatter.diskBytes(disk.available), secondary: nil),
+                .init(label: AppText.localized("总量", "Total", language: language), value: MetricFormatter.diskBytes(disk.total), secondary: nil)
             ]
         } else {
-            diskRows = [.init(label: "状态", value: "读取失败", secondary: nil)]
+            diskRows = [.init(label: AppText.localized("状态", "Status", language: language), value: AppText.localized("读取失败", "Read failed", language: language), secondary: nil)]
         }
 
         let diskActivityRows = [
-            SystemSnapshot.DetailRow(label: "读取速率", value: MetricFormatter.bytesPerSecond(disk.io.readRate), secondary: nil),
-            SystemSnapshot.DetailRow(label: "写入速率", value: MetricFormatter.bytesPerSecond(disk.io.writeRate), secondary: nil),
-            SystemSnapshot.DetailRow(label: "累计读取", value: MetricFormatter.diskBytes(disk.io.totalRead), secondary: nil),
-            SystemSnapshot.DetailRow(label: "累计写入", value: MetricFormatter.diskBytes(disk.io.totalWrite), secondary: nil)
+            SystemSnapshot.DetailRow(label: AppText.localized("读取速率", "Read Rate", language: language), value: MetricFormatter.bytesPerSecond(disk.io.readRate), secondary: nil),
+            SystemSnapshot.DetailRow(label: AppText.localized("写入速率", "Write Rate", language: language), value: MetricFormatter.bytesPerSecond(disk.io.writeRate), secondary: nil),
+            SystemSnapshot.DetailRow(label: AppText.localized("累计读取", "Total Read", language: language), value: MetricFormatter.diskBytes(disk.io.totalRead), secondary: nil),
+            SystemSnapshot.DetailRow(label: AppText.localized("累计写入", "Total Write", language: language), value: MetricFormatter.diskBytes(disk.io.totalWrite), secondary: nil)
         ]
 
         let volumeRows = mountedVolumes.map {
             SystemSnapshot.DetailRow(
                 label: $0.name,
                 value: MetricFormatter.diskBytes($0.used),
-                secondary: "\(MetricFormatter.diskBytes($0.available)) 可用"
+                secondary: AppText.localized("\(MetricFormatter.diskBytes($0.available)) 可用", "\(MetricFormatter.diskBytes($0.available)) available", language: language)
             )
         }
 
         let diskPanel = configuration.isEnabled(.disk)
             ? SystemSnapshot.DetailPanel(
-                title: "磁盘",
-                subtitle: "主卷容量、实时读写和本地卷列表",
+                title: AppText.localized("磁盘", "Disk", language: language),
+                subtitle: AppText.localized("主卷容量、实时读写和本地卷列表", "Main volume usage, realtime I/O, and local volumes", language: language),
                 sections: [
-                    .init(title: "概览", rows: diskRows),
-                    .init(title: "活动", rows: diskActivityRows),
-                    .init(title: "卷", rows: volumeRows)
+                    .init(title: AppText.localized("概览", "Overview", language: language), rows: diskRows),
+                    .init(title: AppText.localized("活动", "Activity", language: language), rows: diskActivityRows),
+                    .init(title: AppText.localized("卷", "Volumes", language: language), rows: volumeRows)
                 ]
             )
-            : disabledPanel(title: "磁盘")
+            : disabledPanel(title: AppText.localized("磁盘", "Disk", language: language))
 
         let batteryHealthRows: [SystemSnapshot.DetailRow]
         if let details = battery.details {
             batteryHealthRows = [
                 .init(
-                    label: "健康",
+                    label: AppText.localized("健康", "Health", language: language),
                     value: details.healthRatio.map(MetricFormatter.percent) ?? "--",
                     secondary: details.fullChargeCapacity.flatMap { fullChargeCapacity in
-                        details.designCapacity.map { "满充 \(MetricFormatter.milliampHours(fullChargeCapacity)) / 设计 \(MetricFormatter.milliampHours($0))" }
+                        details.designCapacity.map {
+                            AppText.localized(
+                                "满充 \(MetricFormatter.milliampHours(fullChargeCapacity)) / 设计 \(MetricFormatter.milliampHours($0))",
+                                "Full \(MetricFormatter.milliampHours(fullChargeCapacity)) / Design \(MetricFormatter.milliampHours($0))",
+                                language: language
+                            )
+                        }
                     }
                 ),
-                .init(label: "循环次数", value: details.cycleCount.map(String.init) ?? "--", secondary: nil),
-                .init(label: "充电器", value: details.adapterPowerWatts.map { "\($0) W" } ?? "--", secondary: nil),
-                .init(label: "温度", value: details.temperatureCelsius.map(MetricFormatter.temperature) ?? "--", secondary: nil)
+                .init(label: AppText.localized("循环次数", "Cycle Count", language: language), value: details.cycleCount.map(String.init) ?? "--", secondary: nil),
+                .init(label: AppText.localized("充电器", "Adapter", language: language), value: details.adapterPowerWatts.map { "\($0) W" } ?? "--", secondary: nil),
+                .init(label: AppText.localized("温度", "Temperature", language: language), value: details.temperatureCelsius.map(MetricFormatter.temperature) ?? "--", secondary: nil)
             ]
         } else {
-            batteryHealthRows = [.init(label: "状态", value: "暂无健康数据", secondary: nil)]
+            batteryHealthRows = [.init(label: AppText.localized("状态", "Status", language: language), value: AppText.localized("暂无健康数据", "No health data", language: language), secondary: nil)]
         }
 
         let batteryPowerRows: [SystemSnapshot.DetailRow]
         if let metric = battery.metric {
             batteryPowerRows = [
-                .init(label: "当前电量", value: metric.summary, secondary: nil),
-                .init(label: "供电状态", value: metric.detail, secondary: nil)
+                .init(label: AppText.localized("当前电量", "Charge", language: language), value: metric.summary, secondary: nil),
+                .init(label: AppText.localized("供电状态", "Power Source", language: language), value: metric.detail, secondary: nil)
             ]
         } else {
-            batteryPowerRows = [.init(label: "状态", value: "当前设备未检测到内置电池", secondary: nil)]
+            batteryPowerRows = [.init(label: AppText.localized("状态", "Status", language: language), value: AppText.localized("当前设备未检测到内置电池", "No built-in battery detected on this device", language: language), secondary: nil)]
         }
 
         let batteryPanel = configuration.isEnabled(.battery)
             ? SystemSnapshot.DetailPanel(
-                title: "电池",
-                subtitle: "电池健康、循环次数和供电状态",
+                title: AppText.localized("电池", "Battery", language: language),
+                subtitle: AppText.localized("电池健康、循环次数和供电状态", "Battery health, cycle count, and power status", language: language),
                 sections: [
-                    .init(title: "健康", rows: batteryHealthRows),
-                    .init(title: "供电", rows: batteryPowerRows)
+                    .init(title: AppText.localized("健康", "Health", language: language), rows: batteryHealthRows),
+                    .init(title: AppText.localized("供电", "Power", language: language), rows: batteryPowerRows)
                 ]
             )
-            : disabledPanel(title: "电池")
+            : disabledPanel(title: AppText.localized("电池", "Battery", language: language))
 
         let currentConnectionAddresses = {
             guard let primaryInterfaceName = networkEnvironment.primaryInterfaceName else {
@@ -1015,7 +1049,7 @@ private actor SystemSampler {
 
         var currentConnectionRows = [
             SystemSnapshot.DetailRow(
-                label: "当前连接",
+                label: AppText.localized("当前连接", "Current Link", language: language),
                 value: networkEnvironment.primaryInterfaceDisplayName ?? networkEnvironment.primaryInterfaceTypeName ?? "--",
                 secondary: networkEnvironment.primaryInterfaceSecondary
             ),
@@ -1025,7 +1059,7 @@ private actor SystemSampler {
                 secondary: networkEnvironment.vpnDetail
             ),
             SystemSnapshot.DetailRow(
-                label: "代理",
+                label: AppText.localized("代理", "Proxy", language: language),
                 value: networkEnvironment.proxySummary,
                 secondary: networkEnvironment.proxyDetail
             )
@@ -1033,22 +1067,22 @@ private actor SystemSampler {
 
         if let wifiDetails {
             currentConnectionRows.append(contentsOf: [
-                .init(label: "Wi‑Fi 状态", value: wifiDetails.status, secondary: wifiDetails.detail),
-                .init(label: "网络名称", value: wifiDetails.networkName ?? "--", secondary: wifiDetails.authorizationNote ?? wifiDetails.standard ?? networkEnvironment.interfaceSecondaryDescription(for: wifiDetails.interfaceName)),
-                .init(label: "信号强度", value: wifiDetails.quality.map(MetricFormatter.percent) ?? "--", secondary: wifiDetails.rssi.map { "\($0) dBm" }),
-                .init(label: "链路速率", value: wifiDetails.transmitRateMbps.map(MetricFormatter.megabitsPerSecond) ?? "--", secondary: wifiDetails.channel)
+                .init(label: AppText.localized("Wi‑Fi 状态", "Wi-Fi Status", language: language), value: wifiDetails.status, secondary: wifiDetails.detail),
+                .init(label: AppText.localized("网络名称", "Network Name", language: language), value: wifiDetails.networkName ?? "--", secondary: wifiDetails.authorizationNote ?? wifiDetails.standard ?? networkEnvironment.interfaceSecondaryDescription(for: wifiDetails.interfaceName)),
+                .init(label: AppText.localized("信号强度", "Signal Strength", language: language), value: wifiDetails.quality.map(MetricFormatter.percent) ?? "--", secondary: wifiDetails.rssi.map { "\($0) dBm" }),
+                .init(label: AppText.localized("链路速率", "Link Rate", language: language), value: wifiDetails.transmitRateMbps.map(MetricFormatter.megabitsPerSecond) ?? "--", secondary: wifiDetails.channel)
             ])
         }
 
         let addressRows: [SystemSnapshot.DetailRow] = currentConnectionAddresses.map {
             let secondaryParts = [
                 networkEnvironment.interfaceTypeName(for: $0.interface),
-                networkEnvironment.isPrimaryInterface($0.interface) ? "主用接口" : nil,
+                networkEnvironment.isPrimaryInterface($0.interface) ? AppText.localized("主用接口", "Primary Interface", language: language) : nil,
                 $0.interface
             ].compactMap { $0 }
 
             return SystemSnapshot.DetailRow(
-                label: "\($0.name) 地址",
+                label: AppText.localized("\($0.name) 地址", "\($0.name) Address", language: language),
                 value: $0.address,
                 secondary: secondaryParts.isEmpty ? nil : secondaryParts.joined(separator: " · ")
             )
@@ -1062,28 +1096,28 @@ private actor SystemSampler {
             .map {
                 let secondaryParts = [
                     networkEnvironment.interfaceTypeName(for: $0.name),
-                    networkEnvironment.isPrimaryInterface($0.name) ? "主用接口" : nil,
+                    networkEnvironment.isPrimaryInterface($0.name) ? AppText.localized("主用接口", "Primary Interface", language: language) : nil,
                     networkEnvironment.isVPNInterface($0.name) ? "VPN" : nil,
-                    "↑ \(MetricFormatter.bytesPerSecond($0.uploadRate))"
+                    AppText.localized("↑ \(MetricFormatter.bytesPerSecond($0.uploadRate))", "↑ \(MetricFormatter.bytesPerSecond($0.uploadRate))", language: language)
                 ].compactMap { $0 }
 
                 return SystemSnapshot.DetailRow(
                     label: networkEnvironment.interfaceDisplayName(for: $0.name) ?? $0.name,
-                    value: "↓ \(MetricFormatter.bytesPerSecond($0.downloadRate))",
+                    value: AppText.localized("↓ \(MetricFormatter.bytesPerSecond($0.downloadRate))", "↓ \(MetricFormatter.bytesPerSecond($0.downloadRate))", language: language),
                     secondary: secondaryParts.joined(separator: " · ")
                 )
             }
 
         let networkPanel = configuration.isEnabled(.network)
             ? SystemSnapshot.DetailPanel(
-                title: "网络",
-                subtitle: "当前连接详情与接口流量",
+                title: AppText.localized("网络", "Network", language: language),
+                subtitle: AppText.localized("当前连接详情与接口流量", "Current connection details and interface throughput", language: language),
                 sections: [
-                    .init(title: "当前连接", rows: currentConnectionRows),
-                    .init(title: "接口流量", rows: interfaceRows)
+                    .init(title: AppText.localized("当前连接", "Current Connection", language: language), rows: currentConnectionRows),
+                    .init(title: AppText.localized("接口流量", "Interface Throughput", language: language), rows: interfaceRows)
                 ]
             )
-            : disabledPanel(title: "网络")
+            : disabledPanel(title: AppText.localized("网络", "Network", language: language))
 
         return .init(
             cpu: cpuPanel,
@@ -1097,7 +1131,7 @@ private actor SystemSampler {
     private func disabledPanel(title: String) -> SystemSnapshot.DetailPanel {
         SystemSnapshot.DetailPanel(
             title: title,
-            subtitle: "未启用",
+            subtitle: AppText.localized("未启用", "Disabled"),
             sections: []
         )
     }
@@ -1215,7 +1249,7 @@ private struct NetworkEnvironmentReading {
         primaryInterfaceName: nil,
         descriptors: [:],
         activeVPNInterfaces: [],
-        proxySummary: "未检测到",
+        proxySummary: AppText.localized("未检测到", "Not Detected"),
         proxyDetail: nil
     )
 
@@ -1242,7 +1276,7 @@ private struct NetworkEnvironmentReading {
     }
 
     var vpnSummary: String {
-        activeVPNInterfaces.isEmpty ? "未连接" : "已连接"
+        activeVPNInterfaces.isEmpty ? AppText.localized("未连接", "Disconnected") : AppText.localized("已连接", "Connected")
     }
 
     var vpnDetail: String? {
@@ -1266,7 +1300,7 @@ private struct NetworkEnvironmentReading {
     func interfaceSecondaryDescription(for name: String) -> String? {
         let parts = [
             interfaceTypeName(for: name),
-            isPrimaryInterface(name) ? "主用接口" : nil,
+            isPrimaryInterface(name) ? AppText.localized("主用接口", "Primary Interface") : nil,
             name
         ].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
@@ -1483,7 +1517,7 @@ private final class DiskIOSampler {
 }
 
 private final class WiFiSampler {
-    func sample() -> SystemSnapshot.WiFiDetails? {
+    func sample(language: AppLanguage) -> SystemSnapshot.WiFiDetails? {
         let client = CWWiFiClient.shared()
         guard let interface = client.interface() else {
             return nil
@@ -1508,10 +1542,10 @@ private final class WiFiSampler {
         let detail: String
 
         if !isPowerOn {
-            status = "已关闭"
-            detail = "Wi‑Fi 已关闭"
+            status = AppText.localized("已关闭", "Off", language: language)
+            detail = AppText.localized("Wi‑Fi 已关闭", "Wi-Fi is turned off", language: language)
         } else if hasActiveLink {
-            status = "已连接"
+            status = AppText.localized("已连接", "Connected", language: language)
             let pieces = [
                 networkName,
                 standard,
@@ -1522,8 +1556,8 @@ private final class WiFiSampler {
                 .compactMap { $0 }
             detail = pieces.isEmpty ? interfaceName : pieces.joined(separator: " · ")
         } else {
-            status = "未连接"
-            detail = authorizationNote ?? "\(interfaceName) 当前没有连接到无线网络"
+            status = AppText.localized("未连接", "Disconnected", language: language)
+            detail = authorizationNote ?? AppText.localized("\(interfaceName) 当前没有连接到无线网络", "\(interfaceName) is not connected to a wireless network", language: language)
         }
 
         return .init(
@@ -1596,24 +1630,24 @@ private final class WiFiSampler {
 
         switch status {
         case .notDetermined:
-            return "等待位置权限后读取网络名称"
+            return AppText.localized("等待位置权限后读取网络名称", "Waiting for location permission to read the network name")
         case .denied, .restricted:
-            return "未授权读取网络名称"
+            return AppText.localized("未授权读取网络名称", "Not authorized to read the network name")
         case .authorizedAlways, .authorizedWhenInUse:
-            return "未读取到网络名称"
+            return AppText.localized("未读取到网络名称", "Network name unavailable")
         @unknown default:
-            return "未读取到网络名称"
+            return AppText.localized("未读取到网络名称", "Network name unavailable")
         }
     }
 }
 
 private final class NetworkEnvironmentSampler {
-    func sample() -> NetworkEnvironmentReading {
+    func sample(language: AppLanguage) -> NetworkEnvironmentReading {
         let primaryInterfaceName = readPrimaryInterfaceName()
-        let descriptors = readInterfaceDescriptors()
+        let descriptors = readInterfaceDescriptors(language: language)
         let activeInterfaces = readActiveInterfaceNames()
         let activeVPNInterfaces = activeInterfaces.filter(Self.isVPNInterfaceName).sorted()
-        let proxy = readProxySettings()
+        let proxy = readProxySettings(language: language)
 
         return .init(
             primaryInterfaceName: primaryInterfaceName,
@@ -1630,11 +1664,11 @@ private final class NetworkEnvironmentSampler {
         }
 
         if interfaceName.hasPrefix("en") {
-            return interfaceName == "en0" ? "Wi‑Fi" : "网络接口"
+            return interfaceName == "en0" ? "Wi‑Fi" : AppText.localized("网络接口", "Network Interface")
         }
 
         if interfaceName.hasPrefix("bridge") {
-            return "桥接"
+            return AppText.localized("桥接", "Bridge")
         }
 
         if interfaceName.hasPrefix("awdl") {
@@ -1642,7 +1676,7 @@ private final class NetworkEnvironmentSampler {
         }
 
         if interfaceName.hasPrefix("llw") {
-            return "低功耗 Wi‑Fi"
+            return AppText.localized("低功耗 Wi‑Fi", "Low Power Wi-Fi")
         }
 
         return nil
@@ -1668,7 +1702,7 @@ private final class NetworkEnvironmentSampler {
         return nil
     }
 
-    private func readInterfaceDescriptors() -> [String: NetworkEnvironmentReading.InterfaceDescriptor] {
+    private func readInterfaceDescriptors(language: AppLanguage) -> [String: NetworkEnvironmentReading.InterfaceDescriptor] {
         guard let interfaces = SCNetworkInterfaceCopyAll() as? [SCNetworkInterface] else {
             return [:]
         }
@@ -1683,7 +1717,7 @@ private final class NetworkEnvironmentSampler {
             let displayName = (SCNetworkInterfaceGetLocalizedDisplayName(interface) as String?) ?? bsdName
             let type = SCNetworkInterfaceGetInterfaceType(interface) as String?
             let isVPN = Self.isVPNInterfaceType(type) || Self.isVPNInterfaceName(bsdName)
-            let typeName = type.flatMap(Self.interfaceTypeName(for:)) ?? Self.fallbackTypeName(for: bsdName) ?? "网络接口"
+            let typeName = type.flatMap(Self.interfaceTypeName(for:)) ?? Self.fallbackTypeName(for: bsdName) ?? AppText.localized("网络接口", "Network Interface", language: language)
 
             descriptors[bsdName] = .init(
                 name: bsdName,
@@ -1722,9 +1756,9 @@ private final class NetworkEnvironmentSampler {
         return names.sorted()
     }
 
-    private func readProxySettings() -> (summary: String, detail: String?) {
+    private func readProxySettings(language: AppLanguage) -> (summary: String, detail: String?) {
         guard let proxies = SCDynamicStoreCopyProxies(nil) as? [String: Any] else {
-            return ("未检测到", nil)
+            return (AppText.localized("未检测到", "Not Detected", language: language), nil)
         }
 
         var enabledItems: [String] = []
@@ -1746,14 +1780,14 @@ private final class NetworkEnvironmentSampler {
         }
 
         if proxyEnabled(kSCPropNetProxiesProxyAutoDiscoveryEnable, in: proxies) {
-            enabledItems.append("自动发现")
+            enabledItems.append(AppText.localized("自动发现", "Auto Discovery", language: language))
         }
 
         guard !enabledItems.isEmpty else {
-            return ("未开启", nil)
+            return (AppText.localized("未开启", "Off", language: language), nil)
         }
 
-        return ("已开启", enabledItems.joined(separator: " · "))
+        return (AppText.localized("已开启", "On", language: language), enabledItems.joined(separator: " · "))
     }
 
     private func proxyEnabled(_ key: CFString, in proxies: [String: Any]) -> Bool {
@@ -1781,20 +1815,6 @@ private final class NetworkEnvironmentSampler {
         "VPN"
     ]
 
-    private static let interfaceTypeLabels: [String: String] = [
-        "IEEE80211": "Wi‑Fi",
-        "Ethernet": "有线网络",
-        "Bluetooth": "蓝牙网络",
-        "Bridge": "桥接",
-        "Bond": "链路聚合",
-        "FireWire": "FireWire",
-        "Modem": "调制解调器",
-        "PPP": "PPP",
-        "WWAN": "蜂窝网络",
-        "IPSec": "VPN",
-        "VPN": "VPN"
-    ]
-
     private static func isVPNInterfaceType(_ type: String?) -> Bool {
         guard let type else {
             return false
@@ -1812,7 +1832,30 @@ private final class NetworkEnvironmentSampler {
     }
 
     private static func interfaceTypeName(for type: String) -> String? {
-        interfaceTypeLabels[type]
+        switch type {
+        case "IEEE80211":
+            return "Wi‑Fi"
+        case "Ethernet":
+            return AppText.localized("有线网络", "Ethernet")
+        case "Bluetooth":
+            return AppText.localized("蓝牙网络", "Bluetooth")
+        case "Bridge":
+            return AppText.localized("桥接", "Bridge")
+        case "Bond":
+            return AppText.localized("链路聚合", "Link Aggregation")
+        case "FireWire":
+            return "FireWire"
+        case "Modem":
+            return AppText.localized("调制解调器", "Modem")
+        case "PPP":
+            return "PPP"
+        case "WWAN":
+            return AppText.localized("蜂窝网络", "Cellular")
+        case "IPSec", "VPN":
+            return "VPN"
+        default:
+            return nil
+        }
     }
 }
 
