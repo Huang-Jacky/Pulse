@@ -64,10 +64,10 @@ final class PulseSettings: ObservableObject {
         static let didMigrateBatteryCategory = "pulse.didMigrateBatteryCategory"
     }
 
-    nonisolated static let defaultEnabledCategories = Set(SystemSnapshot.DetailCategory.allCases)
+    nonisolated static let defaultEnabledCategories: Set<SystemSnapshot.DetailCategory> = [.cpu, .memory, .disk, .network, .battery]
     nonisolated static let orderedCategories = SystemSnapshot.DetailCategory.allCases
     nonisolated static let statusBarSupportedCategories = orderedCategories.filter(\.supportsStatusBar)
-    nonisolated static let defaultStatusBarOrder: [SystemSnapshot.DetailCategory] = [.network, .disk, .cpu, .memory]
+    nonisolated static let defaultStatusBarOrder: [SystemSnapshot.DetailCategory] = [.network, .disk, .cpu, .gpu, .memory]
     nonisolated static let defaultRefreshIntervalSeconds = 1
     nonisolated static let defaultAdaptiveRefreshEnabled = true
     nonisolated static let defaultStatusBarDisplayMode: StatusBarDisplayMode = .standard

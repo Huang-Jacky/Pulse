@@ -22,11 +22,11 @@ struct MenuBarPresentation: Equatable {
     let networkDisplayStyle: StatusBarNetworkDisplayStyle
 
     var itemSpacing: CGFloat {
-        displayMode == .standard ? 8 : 6
+        displayMode == .standard ? 5 : 4
     }
 
     var horizontalPadding: CGFloat {
-        displayMode == .standard ? 3 : 2
+        displayMode == .standard ? 2 : 1
     }
 
     func estimatedWidth(for categories: [SystemSnapshot.DetailCategory]) -> CGFloat {
@@ -39,10 +39,10 @@ struct MenuBarPresentation: Equatable {
 
     func estimatedItemWidth(for category: SystemSnapshot.DetailCategory) -> CGFloat {
         switch category {
-        case .cpu, .memory, .disk, .battery:
+        case .cpu, .memory, .disk, .battery, .gpu:
             switch displayMode {
             case .standard:
-                return 36
+                return 30
             case .compact:
                 return 26
             }
@@ -72,38 +72,37 @@ struct MenuBarStatusView: View {
                 switch category {
                 case .cpu:
                     StatusBarMetricColumn(
-                        title: "CPU",
-                        compactTitle: "C",
+                        icon: "cpu",
                         value: snapshot.cpu.summary,
                         alertLevel: snapshot.cpu.alertLevel,
-                        normalColor: MenuBarPalette.normal,
                         mode: presentation.displayMode
                     )
                 case .memory:
                     StatusBarMetricColumn(
-                        title: "MEM",
-                        compactTitle: "M",
+                        icon: "memorychip",
                         value: snapshot.memory.summary,
                         alertLevel: snapshot.memory.alertLevel,
-                        normalColor: MenuBarPalette.normal,
                         mode: presentation.displayMode
                     )
                 case .disk:
                     StatusBarMetricColumn(
-                        title: "SSD",
-                        compactTitle: "D",
+                        icon: "internaldrive",
                         value: snapshot.disk.summary,
                         alertLevel: snapshot.disk.alertLevel,
-                        normalColor: MenuBarPalette.normal,
+                        mode: presentation.displayMode
+                    )
+                case .gpu:
+                    StatusBarMetricColumn(
+                        icon: "square.grid.3x3.fill",
+                        value: snapshot.gpu.summary,
+                        alertLevel: snapshot.gpu.alertLevel,
                         mode: presentation.displayMode
                     )
                 case .battery:
                     StatusBarMetricColumn(
-                        title: "BAT",
-                        compactTitle: "B",
+                        icon: "battery.100",
                         value: snapshot.battery?.summary ?? "--",
                         alertLevel: .normal,
-                        normalColor: MenuBarPalette.normal,
                         mode: presentation.displayMode
                     )
                 case .network:
@@ -134,6 +133,8 @@ struct MenuBarStatusView: View {
                 return "\(AppText.localized("内存", "Memory")) \(snapshot.memory.summary)"
             case .disk:
                 return "\(AppText.localized("磁盘", "Disk")) \(snapshot.disk.summary)"
+            case .gpu:
+                return "GPU \(snapshot.gpu.summary)"
             case .battery:
                 return "\(AppText.localized("电池", "Battery")) \(snapshot.battery?.summary ?? "--")"
             case .network:
@@ -146,46 +147,44 @@ struct MenuBarStatusView: View {
 }
 
 private struct StatusBarMetricColumn: View {
-    let title: String
-    let compactTitle: String
+    let icon: String
     let value: String
     let alertLevel: SystemSnapshot.MetricAlertLevel
-    let normalColor: Color
     let mode: StatusBarDisplayMode
 
     var body: some View {
         switch mode {
         case .standard:
-            VStack(alignment: .leading, spacing: -1) {
-                Text(title)
-                    .font(.system(size: 8.5, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 36, alignment: .leading)
+            VStack(alignment: .center, spacing: -1) {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(alertColor)
+                    .frame(height: 12)
                 Text(value)
                     .font(.system(size: 11.5, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .lineLimit(1)
                     .foregroundStyle(alertColor)
-                    .frame(width: 36, alignment: .leading)
+                    .frame(width: 30, alignment: .center)
             }
         case .compact:
-            VStack(alignment: .leading, spacing: -1) {
-                Text(compactTitle)
-                    .font(.system(size: 8, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .center, spacing: 1) {
+                Image(systemName: icon)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(alertColor)
+                    .frame(height: 10)
                 Text(value)
                     .font(.system(size: 10, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .lineLimit(1)
-                    .minimumScaleFactor(0.82)
                     .foregroundStyle(alertColor)
             }
-            .frame(width: 26, alignment: .leading)
+            .frame(width: 26, alignment: .center)
         }
     }
 
     private var alertColor: Color {
-        MenuBarPalette.color(for: alertLevel, normal: normalColor)
+        MenuBarPalette.color(for: alertLevel, normal: MenuBarPalette.normal)
     }
 }
 

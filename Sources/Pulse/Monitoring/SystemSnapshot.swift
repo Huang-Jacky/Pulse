@@ -9,10 +9,11 @@ struct SystemSnapshot: Sendable {
 
     enum DetailCategory: String, CaseIterable, Identifiable, Sendable {
         case cpu
+        case gpu
         case memory
-        case disk
-        case battery
-        case network
+       case disk
+       case battery
+       case network
 
         var id: String { rawValue }
 
@@ -26,16 +27,18 @@ struct SystemSnapshot: Sendable {
                 return AppText.localized("磁盘", "Disk")
             case .battery:
                 return AppText.localized("电池", "Battery")
-            case .network:
+           case .network:
                 return AppText.localized("网络", "Network")
+            case .gpu:
+                return "GPU"
             }
         }
 
         var supportsStatusBar: Bool {
             switch self {
-            case .battery:
+           case .battery:
                 return false
-            case .cpu, .memory, .disk, .network:
+            case .cpu, .memory, .disk, .network, .gpu:
                 return true
             }
         }
@@ -127,11 +130,17 @@ struct SystemSnapshot: Sendable {
         let uploadRate: Double
     }
 
-    struct NetworkDetails: Sendable {
-        let wifi: WiFiDetails?
-        let addresses: [NetworkAddress]
-        let history: [NetworkHistorySample]
+   struct NetworkDetails: Sendable {
+       let wifi: WiFiDetails?
+       let addresses: [NetworkAddress]
+       let history: [NetworkHistorySample]
+   }
+    struct GPUDetails: Sendable {
+        let modelName: String
+        let utilization: Double
+        let history: [Double]
     }
+
 
     struct WiFiDetails: Sendable {
         let status: String
@@ -178,9 +187,10 @@ struct SystemSnapshot: Sendable {
     struct DetailPanels: Sendable {
         let cpu: DetailPanel
         let memory: DetailPanel
-        let disk: DetailPanel
-        let battery: DetailPanel
-        let network: DetailPanel
+       let disk: DetailPanel
+       let battery: DetailPanel
+       let network: DetailPanel
+        let gpu: DetailPanel
 
         func panel(for category: DetailCategory) -> DetailPanel {
             switch category {
@@ -192,8 +202,10 @@ struct SystemSnapshot: Sendable {
                 return disk
             case .battery:
                 return battery
-            case .network:
+           case .network:
                 return network
+            case .gpu:
+                return gpu
             }
         }
     }
@@ -201,13 +213,15 @@ struct SystemSnapshot: Sendable {
     let cpu: GaugeMetric
     let memory: GaugeMetric
     let disk: GaugeMetric
-    let battery: BatteryMetric?
-    let network: NetworkMetric
+   let battery: BatteryMetric?
+   let network: NetworkMetric
+    let gpu: GaugeMetric
     let cpuDetails: CPUDetails
     let memoryDetails: MemoryDetails
     let diskDetails: DiskDetails
-    let batteryDetails: BatteryDetails?
-    let networkDetails: NetworkDetails
+   let batteryDetails: BatteryDetails?
+   let networkDetails: NetworkDetails
+    let gpuDetails: GPUDetails
     let detailPanels: DetailPanels
 
     var primaryMetrics: [GaugeMetric] {
@@ -243,7 +257,7 @@ struct SystemSnapshot: Sendable {
             accent: "disk",
             alertLevel: .normal
         ),
-        battery: nil,
+       battery: nil,
         network: NetworkMetric(
             download: "--",
             upload: "--",
@@ -253,6 +267,16 @@ struct SystemSnapshot: Sendable {
             statusBarDownloadLine: "-- KB/s",
             statusBarUploadLine: "-- KB/s"
         ),
+        gpu: GaugeMetric(
+            category: .gpu,
+            title: "GPU",
+            value: 0,
+            summary: "--",
+            detail: AppText.localized("等待采样", "Waiting for samples"),
+            accent: "gpu",
+            alertLevel: .normal
+        ),
+
         cpuDetails: CPUDetails(
             userUsage: 0,
             systemUsage: 0,
@@ -286,12 +310,18 @@ struct SystemSnapshot: Sendable {
             totalWrite: 0,
             history: []
         ),
-        batteryDetails: nil,
+       batteryDetails: nil,
         networkDetails: NetworkDetails(
             wifi: nil,
             addresses: [],
             history: []
         ),
+        gpuDetails: GPUDetails(
+            modelName: "--",
+            utilization: 0,
+            history: []
+        ),
+
         detailPanels: DetailPanels(
             cpu: DetailPanel(
                 title: AppText.localized("CPU 详细数据", "CPU Details"),
@@ -317,6 +347,11 @@ struct SystemSnapshot: Sendable {
                 title: AppText.localized("网络 详细数据", "Network Details"),
                 subtitle: AppText.localized("等待采样", "Waiting for samples"),
                 sections: []
+            ),
+            gpu: DetailPanel(
+                title: AppText.localized("GPU 详细数据", "GPU Details"),
+                subtitle: AppText.localized("等待采样", "Waiting for samples"),
+                sections: []
             )
         )
     )
@@ -326,7 +361,7 @@ struct SystemSnapshot: Sendable {
 enum MetricFormatter {
     static func alertLevel(for category: SystemSnapshot.DetailCategory, value: Double) -> SystemSnapshot.MetricAlertLevel {
         switch category {
-        case .cpu, .memory:
+       case .cpu, .memory, .gpu:
             if value >= 0.9 {
                 return .critical
             }

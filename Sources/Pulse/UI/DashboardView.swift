@@ -161,6 +161,8 @@ private struct CategoryContentView: View {
                 BatteryCategoryView(snapshot: snapshot)
             case .network:
                 NetworkCategoryView(snapshot: snapshot)
+            case .gpu:
+                GPUCategoryView(snapshot: snapshot)
             }
         case .settings:
             SettingsCategoryView(settings: settings, updateViewModel: updateViewModel)
@@ -857,6 +859,43 @@ private struct BatteryCategoryView: View {
     }
 }
 
+private struct GPUCategoryView: View {
+    let snapshot: SystemSnapshot
+
+    var body: some View {
+        let detailsRows = snapshot.detailPanels.gpu.sections[safe: 0]?.rows ?? []
+
+        VStack(alignment: .leading, spacing: 10) {
+            HeroCard(
+                title: "GPU",
+                headline: snapshot.gpu.summary,
+                trailing: snapshot.gpu.detail,
+                accent: Palette.purple,
+                symbolName: "cpu"
+            ) {
+                HStack {
+                    Spacer(minLength: 0)
+
+                    RingMetricView(
+                        value: snapshot.gpu.value,
+                        label: AppText.localized("利用率", "Utilization"),
+                        subtitle: snapshot.gpu.summary,
+                        tint: Palette.purple
+                    )
+
+                    Spacer(minLength: 0)
+                }
+
+                SingleSeriesHistoryChart(values: snapshot.gpuDetails.history, tint: Palette.purple)
+            }
+
+            SectionCard(title: AppText.localized("概览", "Overview")) {
+                MetricPillGrid(rows: detailsRows)
+            }
+        }
+    }
+}
+
 private struct NetworkCategoryView: View {
     let snapshot: SystemSnapshot
 
@@ -1320,6 +1359,7 @@ private enum Palette {
     static let blue = Color(red: 0.18, green: 0.52, blue: 0.98)
     static let pink = Color(red: 0.97, green: 0.34, blue: 0.63)
     static let green = Color(red: 0.20, green: 0.76, blue: 0.56)
+    static let purple = Color(red: 0.56, green: 0.38, blue: 0.98)
     static let warning = Color(red: 0.98, green: 0.63, blue: 0.18)
     static let critical = Color(red: 0.96, green: 0.27, blue: 0.21)
 

@@ -259,10 +259,12 @@ private actor SystemSampler {
     private var networkSampler = NetworkSampler()
     private let networkEnvironmentSampler = NetworkEnvironmentSampler()
     private let wifiSampler = WiFiSampler()
+    private var gpuSampler = GPUSampler()
     private var cpuHistory: [SystemSnapshot.CPUHistorySample] = []
     private var diskHistory: [SystemSnapshot.DiskHistorySample] = []
     private var memoryHistory: [Double] = []
     private var networkHistory: [SystemSnapshot.NetworkHistorySample] = []
+    private var gpuHistory: [Double] = []
     private var enabledCategories = PulseSettings.defaultEnabledCategories
 
     func updateEnabledCategories(_ categories: Set<SystemSnapshot.DetailCategory>) {
@@ -281,6 +283,9 @@ private actor SystemSampler {
             diskHistory.removeAll()
             diskIOSampler.reset()
         }
+        if disabledCategories.contains(.gpu) {
+            gpuHistory.removeAll()
+        }
 
         if disabledCategories.contains(.network) {
             networkHistory.removeAll()
@@ -297,6 +302,7 @@ private actor SystemSampler {
         let diskReading = configuration.isEnabled(.disk) ? readDisk(language: language) : .placeholder
         let batteryReading = readBattery(language: language)
         let networkReading = configuration.isEnabled(.network) ? readNetwork() : .placeholder
+        let gpuReading = configuration.isEnabled(.gpu) ? readGPU(language: language) : .placeholder
         let wifiDetails = configuration.isEnabled(.network) ? wifiSampler.sample(language: language) : nil
         let networkEnvironment = configuration.isEnabled(.network) ? networkEnvironmentSampler.sample(language: language) : .empty
 
@@ -315,6 +321,9 @@ private actor SystemSampler {
         if configuration.isEnabled(.network) {
             appendNetworkHistory(download: networkReading.metricRate.downloadRate, upload: networkReading.metricRate.uploadRate)
         }
+        if configuration.isEnabled(.gpu) {
+            appendGPUHistory(utilization: gpuReading.utilization)
+        }
 
         let needsProcessSample = configuration.isEnabled(.cpu) || configuration.isEnabled(.memory)
         let processes = needsProcessSample ? ProcessSampler.sampleProcesses() : []
@@ -327,6 +336,7 @@ private actor SystemSampler {
             disk: diskReading,
             battery: batteryReading,
             network: networkReading,
+            gpu: gpuReading,
             wifiDetails: wifiDetails,
             networkEnvironment: networkEnvironment,
             processes: processes,
@@ -340,6 +350,7 @@ private actor SystemSampler {
             disk: diskReading.metric,
             battery: batteryReading.metric,
             network: networkReading.metric,
+            gpu: gpuReading.metric,
             cpuDetails: SystemSnapshot.CPUDetails(
                 userUsage: cpuReading.userUsage,
                 systemUsage: cpuReading.systemUsage,
@@ -373,13 +384,18 @@ private actor SystemSampler {
                 totalWrite: diskReading.io.totalWrite,
                 history: diskHistory
             ),
-            batteryDetails: batteryReading.details,
-            networkDetails: SystemSnapshot.NetworkDetails(
-                wifi: wifiDetails,
-                addresses: networkAddresses,
-                history: networkHistory
-            ),
-            detailPanels: detailPanels
+        batteryDetails: batteryReading.details,
+        networkDetails: SystemSnapshot.NetworkDetails(
+            wifi: wifiDetails,
+            addresses: networkAddresses,
+            history: networkHistory
+        ),
+        gpuDetails: SystemSnapshot.GPUDetails(
+            modelName: gpuReading.modelName,
+            utilization: gpuReading.utilization,
+            history: gpuHistory
+        ),
+        detailPanels: detailPanels
         )
     }
 
@@ -676,6 +692,22 @@ private actor SystemSampler {
             interfaces: sample.interfaces
         )
     }
+    private func readGPU(language: AppLanguage) -> GPUReading {
+        let reading = gpuSampler.sample()
+        return GPUReading(
+            metric: .init(
+                category: .gpu,
+                title: "GPU",
+                value: reading.utilization,
+                summary: MetricFormatter.percent(reading.utilization),
+                detail: reading.modelName,
+                accent: "gpu",
+                alertLevel: MetricFormatter.alertLevel(for: .gpu, value: reading.utilization)
+            ),
+            utilization: reading.utilization,
+            modelName: reading.modelName
+        )
+    }
 
     private func appendCPUHistory(user: Double, system: Double) {
         cpuHistory.append(.init(userUsage: user, systemUsage: system))
@@ -702,6 +734,12 @@ private actor SystemSampler {
         networkHistory.append(.init(downloadRate: download, uploadRate: upload))
         if networkHistory.count > SamplingInterval.historyLimit {
             networkHistory.removeFirst(networkHistory.count - SamplingInterval.historyLimit)
+        }
+    }
+    private func appendGPUHistory(utilization: Double) {
+        gpuHistory.append(utilization)
+        if gpuHistory.count > SamplingInterval.historyLimit {
+            gpuHistory.removeFirst(gpuHistory.count - SamplingInterval.historyLimit)
         }
     }
 
@@ -888,6 +926,7 @@ private actor SystemSampler {
         disk: DiskReading,
         battery: BatteryReading,
         network: NetworkReading,
+        gpu: GPUReading,
         wifiDetails: SystemSnapshot.WiFiDetails?,
         networkEnvironment: NetworkEnvironmentReading,
         processes: [ProcessSnapshot],
@@ -1118,13 +1157,29 @@ private actor SystemSampler {
                 ]
             )
             : disabledPanel(title: AppText.localized("网络", "Network", language: language))
+        let gpuPanel = configuration.isEnabled(.gpu)
+            ? SystemSnapshot.DetailPanel(
+                title: "GPU",
+                subtitle: AppText.localized("GPU 利用率", "GPU Utilization", language: language),
+                sections: [
+                    .init(
+                        title: AppText.localized("概览", "Overview", language: language),
+                        rows: [
+                            .init(label: AppText.localized("利用率", "Utilization", language: language), value: MetricFormatter.percent(gpu.utilization), secondary: nil),
+                            .init(label: AppText.localized("型号", "Model", language: language), value: gpu.modelName, secondary: nil)
+                        ]
+                    )
+                ]
+            )
+            : disabledPanel(title: "GPU")
 
         return .init(
             cpu: cpuPanel,
             memory: memoryPanel,
             disk: diskPanel,
             battery: batteryPanel,
-            network: networkPanel
+            network: networkPanel,
+            gpu: gpuPanel
         )
     }
 
@@ -1325,12 +1380,24 @@ private struct NetworkReading {
     let metricRate: MetricRate
     let interfaces: [NetworkSampler.InterfaceRate]
 
-    static let placeholder = NetworkReading(
-        metric: SystemSnapshot.placeholder.network,
-        metricRate: .init(downloadRate: 0, uploadRate: 0),
-        interfaces: []
+static let placeholder = NetworkReading(
+    metric: SystemSnapshot.placeholder.network,
+    metricRate: .init(downloadRate: 0, uploadRate: 0),
+    interfaces: []
+)
+}
+private struct GPUReading {
+    let metric: SystemSnapshot.GaugeMetric
+    let utilization: Double
+    let modelName: String
+
+    static let placeholder = GPUReading(
+        metric: SystemSnapshot.placeholder.gpu,
+        utilization: 0,
+        modelName: "--"
     )
 }
+
 
 private struct MountedVolume {
     let name: String
@@ -2135,6 +2202,62 @@ private struct NetworkSampler {
         return Sample(received: received, sent: sent, timestamp: Date(), interfaces: interfaces)
     }
 }
+private struct GPUSampler {
+    struct Reading {
+        let utilization: Double
+        let modelName: String
+    }
+
+    func sample() -> Reading {
+        let matching = IOServiceMatching("AGXAccelerator")
+        var iterator: io_iterator_t = 0
+
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, matching, &iterator) == KERN_SUCCESS else {
+            return Reading(utilization: 0, modelName: "Apple GPU")
+        }
+
+        defer { IOObjectRelease(iterator) }
+
+        let service = IOIteratorNext(iterator)
+        guard service != 0 else {
+            return Reading(utilization: 0, modelName: "Apple GPU")
+        }
+
+        defer { IOObjectRelease(service) }
+
+        var properties: Unmanaged<CFMutableDictionary>?
+        guard IORegistryEntryCreateCFProperties(service, &properties, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+              let dict = properties?.takeRetainedValue() as? [String: Any]
+        else {
+            return Reading(utilization: 0, modelName: "Apple GPU")
+        }
+
+        let modelName: String
+        if let name = dict["Model"] as? String {
+            modelName = name
+        } else if let name = dict["IOName"] as? String {
+            modelName = name
+        } else {
+            modelName = "Apple GPU"
+        }
+
+        let utilization: Double
+        if let stats = dict["PerformanceStatistics"] as? [String: Any] {
+            if let util = stats["GPURecentUtilization"] as? NSNumber {
+                utilization = Double(util.doubleValue) / 100.0
+            } else if let util = stats["GPU Core Utilization"] as? NSNumber {
+                utilization = Double(util.doubleValue) / 100.0
+            } else {
+                utilization = 0
+            }
+        } else {
+            utilization = 0
+        }
+
+        return Reading(utilization: max(0, min(1, utilization)), modelName: modelName)
+    }
+}
+
 
 private extension Array {
     subscript(safe index: Int) -> Element? {
