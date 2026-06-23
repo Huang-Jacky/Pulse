@@ -1,14 +1,42 @@
 import AppKit
 import SwiftUI
+import IOKit
+
+
+private struct SystemInfo {
+    let osVersion: String
+    let osBuild: String
+    let kernelVersion: String
+    let hostName: String
+    let userName: String
+    let hardwareModel: String
+    let chipName: String
+    let totalMemory: String
+    let pl0Name: String
+    let pl0Cores: Int
+    let pl1Name: String
+    let pl1Cores: Int
+    let hardwareUUID: String
+    let serialNumber: String?
+
+    static let placeholder = SystemInfo(
+        osVersion: "--", osBuild: "--", kernelVersion: "--",
+        hostName: "--", userName: "--",
+        hardwareModel: "--", chipName: "--",
+        totalMemory: "--", pl0Name: "--", pl0Cores: 0, pl1Name: "--", pl1Cores: 0,
+        hardwareUUID: "--", serialNumber: nil
+    )
+}
 
 struct DashboardView: View {
     @ObservedObject var monitor: SystemMonitor
     @ObservedObject var settings: PulseSettings
     @State private var selectedTab: DashboardTab = .metric(.cpu)
     @StateObject private var updateViewModel = UpdateViewModel()
+    @State private var systemInfo = SystemInfo.placeholder
 
     private var availableTabs: [DashboardTab] {
-        settings.detailCategories.map(DashboardTab.metric) + [.settings]
+        settings.detailCategories.map(DashboardTab.metric) + [.system, .settings]
     }
 
     var body: some View {
@@ -31,7 +59,8 @@ struct DashboardView: View {
                     snapshot: snapshot,
                     selectedTab: selectedTab,
                     settings: settings,
-                    updateViewModel: updateViewModel
+                    updateViewModel: updateViewModel,
+                    systemInfo: systemInfo
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.bottom, 2)
@@ -66,10 +95,77 @@ struct DashboardView: View {
             )
         )
         .id(settings.appLanguage)
-        .onAppear(perform: syncSelectedTab)
+        .onAppear {
+            syncSelectedTab()
+            loadSystemInfo()
+        }
         .onChange(of: settings.detailCategories) { _ in
             syncSelectedTab()
         }
+    }
+
+
+    private func loadSystemInfo() {
+        func sys(_ name: String) -> String? {
+            var size = 0
+            sysctlbyname(name, nil, &size, nil, 0)
+            guard size > 0 else { return nil }
+            var buf = [CChar](repeating: 0, count: size)
+            sysctlbyname(name, &buf, &size, nil, 0)
+            let s = String(cString: buf).trimmingCharacters(in: .whitespacesAndNewlines)
+            return s.isEmpty ? nil : s
+        }
+
+        func sysInt(_ name: String) -> Int? {
+            var val: Int = 0
+            var size = MemoryLayout<Int>.size
+            let kr = sysctlbyname(name, &val, &size, nil, 0)
+            return kr == 0 && size > 0 ? val : nil
+        }
+
+        let osVer = ProcessInfo.processInfo.operatingSystemVersionString
+        let host = ProcessInfo.processInfo.hostName
+        let user = NSUserName()
+        let mem = ProcessInfo.processInfo.physicalMemory
+        let memStr = ByteCountFormatter.string(fromByteCount: Int64(mem), countStyle: .binary)
+        let chip = sys("hw.chip") ?? sys("machdep.cpu.brand_string") ?? "--"
+        let model = sys("hw.model") ?? "--"
+        let totalCores = ProcessInfo.processInfo.processorCount
+        let localizedCoreName = { (raw: String) -> String in
+            switch raw {
+            case "Super": return AppText.localized("超级核", "Super", language: settings.appLanguage)
+            case "Performance": return AppText.localized("性能核", "Performance", language: settings.appLanguage)
+            case "Efficiency": return AppText.localized("能效核", "Efficiency", language: settings.appLanguage)
+            default: return raw
+            }
+        }
+        let pl0Name = localizedCoreName(sys("hw.perflevel0.name") ?? AppText.localized("性能核", "Performance", language: settings.appLanguage))
+        let pl1Name = localizedCoreName(sys("hw.perflevel1.name") ?? AppText.localized("能效核", "Efficiency", language: settings.appLanguage))
+        let pC = sysInt("hw.perflevel0.logicalcpu") ?? sysInt("hw.perflevel0.logicalcpu_max") ?? sysInt("hw.perflevel0.physicalcpu") ?? totalCores
+        let eC = pC >= totalCores ? 0 : (sysInt("hw.perflevel1.logicalcpu") ?? sysInt("hw.perflevel1.logicalcpu_max") ?? sysInt("hw.perflevel1.physicalcpu") ?? (totalCores - pC))
+        let uuid = sys("hw.uuid") ?? "--"
+        let build = sys("kern.osversion") ?? "--"
+        let kernel = sys("kern.version")?.components(separatedBy: ":").first ?? "--"
+
+        var serial: String?
+        let svc = IOServiceGetMatchingService(kIOMainPortDefault,
+            IOServiceMatching("IOPlatformExpertDevice"))
+        if svc != 0 {
+            var props: Unmanaged<CFMutableDictionary>?
+            if IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+               let dict = props?.takeRetainedValue() as? [String: Any] {
+                serial = dict["IOPlatformSerialNumber"] as? String
+            }
+            IOObjectRelease(svc)
+        }
+
+        systemInfo = SystemInfo(
+            osVersion: osVer, osBuild: build, kernelVersion: kernel,
+            hostName: host, userName: user,
+            hardwareModel: model, chipName: chip,
+            totalMemory: memStr, pl0Name: pl0Name, pl0Cores: pC, pl1Name: pl1Name, pl1Cores: eC,
+            hardwareUUID: uuid, serialNumber: serial
+        )
     }
 
     private func syncSelectedTab() {
@@ -82,12 +178,15 @@ struct DashboardView: View {
 
 private enum DashboardTab: Hashable, Identifiable {
     case metric(SystemSnapshot.DetailCategory)
+    case system
     case settings
 
     var id: String {
         switch self {
         case let .metric(category):
             return category.rawValue
+        case .system:
+            return "system"
         case .settings:
             return "settings"
         }
@@ -97,6 +196,8 @@ private enum DashboardTab: Hashable, Identifiable {
         switch self {
         case let .metric(category):
             return category.title
+        case .system:
+            return AppText.localized("系统", "System")
         case .settings:
             return AppText.localized("配置", "Settings")
         }
@@ -146,6 +247,7 @@ private struct CategoryContentView: View {
     let selectedTab: DashboardTab
     @ObservedObject var settings: PulseSettings
     @ObservedObject var updateViewModel: UpdateViewModel
+    let systemInfo: SystemInfo
 
     var body: some View {
         switch selectedTab {
@@ -164,6 +266,8 @@ private struct CategoryContentView: View {
             case .gpu:
                 GPUCategoryView(snapshot: snapshot)
             }
+        case .system:
+            SystemInfoCategoryView(info: systemInfo)
         case .settings:
             SettingsCategoryView(settings: settings, updateViewModel: updateViewModel)
         }
@@ -941,6 +1045,63 @@ private struct NetworkCategoryView: View {
         }
     }
 }
+
+
+private struct SystemInfoCategoryView: View {
+    let info: SystemInfo
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionCard(title: AppText.localized("软件", "Software")) {
+                VStack(spacing: 6) {
+                    SystemInfoRow(label: "macOS", value: info.osVersion)
+                    SystemInfoRow(label: AppText.localized("版本构建", "Build"), value: info.osBuild)
+                    SystemInfoRow(label: AppText.localized("内核", "Kernel"), value: info.kernelVersion)
+                }
+            }
+
+            SectionCard(title: AppText.localized("硬件", "Hardware")) {
+                VStack(spacing: 6) {
+                    SystemInfoRow(label: AppText.localized("型号", "Model"), value: info.hardwareModel)
+                    SystemInfoRow(label: AppText.localized("芯片", "Chip"), value: info.chipName)
+                    SystemInfoRow(label: AppText.localized("内存", "Memory"), value: info.totalMemory)
+                    SystemInfoRow(label: info.pl0Name, value: "\(info.pl0Cores)")
+                    SystemInfoRow(label: info.pl1Name, value: "\(info.pl1Cores)")
+                }
+            }
+
+            SectionCard(title: AppText.localized("标识", "Identity")) {
+                VStack(spacing: 6) {
+                    SystemInfoRow(label: AppText.localized("电脑名称", "Name"), value: info.hostName)
+                    SystemInfoRow(label: AppText.localized("用户", "User"), value: info.userName)
+                    SystemInfoRow(label: "UUID", value: info.hardwareUUID)
+                    if let serial = info.serialNumber {
+                        SystemInfoRow(label: AppText.localized("序列号", "Serial"), value: serial)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 436, alignment: .topLeading)
+    }
+}
+
+private struct SystemInfoRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+        }
+    }
+}
+
 
 private struct HeroCard<Content: View>: View {
     let title: String
